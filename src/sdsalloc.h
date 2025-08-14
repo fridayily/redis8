@@ -26,6 +26,7 @@
 #define s_free zfree
 #define s_malloc_usable zmalloc_usable
 #define s_realloc_usable zrealloc_usable
+// Attempts to allocate memory but returns NULL on failure instead of terminating the program
 #define s_trymalloc_usable ztrymalloc_usable
 #define s_tryrealloc_usable ztryrealloc_usable
 #define s_free_usable zfree_usable

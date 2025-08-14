@@ -62,6 +62,7 @@ void zlibc_free(void *ptr) {
 #elif defined(USE_JEMALLOC)
 #define malloc(size) je_malloc(size)
 #define calloc(count,size) je_calloc(count,size)
+// je_realloc 进行实际的内存重新分配
 #define realloc(ptr,size) je_realloc(ptr,size)
 #define free(ptr) je_free(ptr)
 #define mallocx(size,flags) je_mallocx(size,flags)
@@ -337,16 +338,16 @@ static inline void *ztryrealloc_usable_internal(void *ptr, size_t size, size_t *
     }
 
 #ifdef HAVE_MALLOC_SIZE
-    oldsize = zmalloc_size(ptr);
-    newptr = realloc(ptr,size);
+    oldsize = zmalloc_size(ptr);  // 获取旧内存大小
+    newptr = realloc(ptr,size);  // 重新分配内存
     if (newptr == NULL) {
         if (usable) *usable = 0;
         return NULL;
     }
 
-    update_zmalloc_stat_free(oldsize);
-    size = zmalloc_size(newptr);
-    update_zmalloc_stat_alloc(size);
+    update_zmalloc_stat_free(oldsize); // 更新统计信息（释放旧内存）
+    size = zmalloc_size(newptr); // 获取新内存大小
+    update_zmalloc_stat_alloc(size); // 更新统计信息（分配新内存）
     if (usable) *usable = size;
     return newptr;
 #else
@@ -368,6 +369,7 @@ static inline void *ztryrealloc_usable_internal(void *ptr, size_t size, size_t *
 
 void *ztryrealloc_usable(void *ptr, size_t size, size_t *usable) {
     size_t usable_size = 0;
+    // 进行实际的内存重新分配
     ptr = ztryrealloc_usable_internal(ptr, size, &usable_size);
 #ifdef HAVE_MALLOC_SIZE
     ptr = extend_to_usable(ptr, usable_size);

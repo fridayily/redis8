@@ -79,6 +79,11 @@ static inline size_t sdsTypeMaxSize(char type) {
  * You can print the string with printf() as there is an implicit \0 at the
  * end of the string. However the string is binary safe and can contain
  * \0 characters in the middle, as the length is stored in the sds header. */
+/*
+1.   |len|Alloc|Flags|Data|'\0'|freespace|
+2.   flags 表示 SDS_TYPE_5, SDS_TYPE_8, SDS_TYPE_16, SDS_TYPE_32, SDS_TYPE_64
+3.   alloc 表示分配内存的大小
+*/
 sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
     void *sh;
     sds s;
@@ -110,6 +115,7 @@ sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
             break;
         }
         case SDS_TYPE_8: {
+            // get a pointer to the header structure
             SDS_HDR_VAR(8,s);
             sh->len = initlen;
             sh->alloc = usable;
@@ -172,6 +178,7 @@ sds sdsdup(const sds s) {
 /* Free an sds string. No operation is performed if 's' is NULL. */
 void sdsfree(sds s) {
     if (s == NULL) return;
+    // The expression s[-1] accesses the flags byte just before the string data.
     s_free((char*)s-sdsHdrSize(s[-1]));
 }
 
@@ -258,17 +265,24 @@ sds _sdsMakeRoomFor(sds s, size_t addlen, int greedy) {
     } else {
         /* Since the header size changes, need to move the string forward,
          * and can't use realloc */
+        // 重新分配空间
         newsh = s_malloc_usable(hdrlen+newlen+1, &usable);
         if (newsh == NULL) return NULL;
+        // 复制数据
         memcpy((char*)newsh+hdrlen, s, len+1);
         s_free(sh);
+        // 真实数据的地址
         s = (char*)newsh+hdrlen;
+        // 设置 flag
         s[-1] = type;
+        // 设置长度
         sdssetlen(s, len);
     }
     usable = usable-hdrlen-1;
     if (usable > sdsTypeMaxSize(type))
         usable = sdsTypeMaxSize(type);
+    // 设置可分配容量
+    // 到现在 header 的 type,len,alloc 都被设置了
     sdssetalloc(s, usable);
     return s;
 }
@@ -542,14 +556,18 @@ sds sdscatvprintf(sds s, const char *fmt, va_list ap) {
     /* Alloc enough space for buffer and \0 after failing to
      * fit the string in the current buffer size. */
     while(1) {
+        // 用于复制可变参数列表（va_list）的状态
         va_copy(cpy,ap);
+        // 用于将格式化的数据写入字符串缓冲区
         bufstrlen = vsnprintf(buf, buflen, fmt, cpy);
+        // 清理复制的参数列表
         va_end(cpy);
         if (bufstrlen < 0) {
             if (buf != staticbuf) s_free(buf);
             return NULL;
         }
         if (((size_t)bufstrlen) >= buflen) {
+            // 如果缓冲区不够，需要重新分配并再次尝试
             if (buf != staticbuf) s_free(buf);
             buflen = ((size_t)bufstrlen) + 1;
             buf = s_malloc(buflen);

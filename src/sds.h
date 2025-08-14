@@ -172,6 +172,7 @@ static inline size_t sdsalloc(const sds s) {
     return 0;
 }
 
+//  设置 sds 的可用空间
 static inline void sdssetalloc(sds s, size_t newlen) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {

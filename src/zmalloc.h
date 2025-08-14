@@ -30,6 +30,7 @@
 #include <jemalloc/jemalloc.h>
 #if (JEMALLOC_VERSION_MAJOR == 2 && JEMALLOC_VERSION_MINOR >= 1) || (JEMALLOC_VERSION_MAJOR > 2)
 #define HAVE_MALLOC_SIZE 1
+// 这是一个查询函数，用于获取已分配内存块的实际可用大小
 #define zmalloc_size(p) je_malloc_usable_size(p)
 #else
 #error "Newer version of jemalloc required"

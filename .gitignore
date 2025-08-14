@@ -42,3 +42,7 @@ Makefile.dep
 .ccls-cache/*
 compile_commands.json
 redis.code-workspace
+build/
+modules/vector-sets/expr-test
+tests/example/c/test_adlist
+tests/example/c/test_sds
