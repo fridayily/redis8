@@ -341,42 +341,42 @@ int main(void)
 {
     printf("Running adlist tests...\n");
 
-    // test_list_create_and_release();
-    // printf("test_list_create_and_release passed\n");
-    //
-    // test_list_add_head();
-    // printf("test_list_add_head passed\n");
-    //
-    // test_list_add_tail();
-    // printf("test_list_add_tail passed\n");
-    //
-    // test_list_insert_node();
-    // printf("test_list_insert_node passed\n");
-    //
-    // test_list_delete_node();
-    // printf("test_list_delete_node passed\n");
-    //
-    // test_list_search_key();
-    // printf("test_list_search_key passed\n");
-    //
-    // test_list_index();
-    // printf("test_list_index passed\n");
-    //
-    // test_list_iterator();
-    // printf("test_list_iterator passed\n");
+    test_list_create_and_release();
+    printf("test_list_create_and_release passed\n");
+
+    test_list_add_head();
+    printf("test_list_add_head passed\n");
+
+    test_list_add_tail();
+    printf("test_list_add_tail passed\n");
+
+    test_list_insert_node();
+    printf("test_list_insert_node passed\n");
+
+    test_list_delete_node();
+    printf("test_list_delete_node passed\n");
+
+    test_list_search_key();
+    printf("test_list_search_key passed\n");
+
+    test_list_index();
+    printf("test_list_index passed\n");
+
+    test_list_iterator();
+    printf("test_list_iterator passed\n");
 
     test_list_duplicate();
     printf("test_list_duplicate passed\n");
 
-    // test_list_set_free_method();
-    // printf("test_list_set_free_method passed\n");
+    test_list_set_free_method();
+    printf("test_list_set_free_method passed\n");
 
 
-    // test_list_join();
-    // printf("test_list_join passed\n");
-    //
-    // test_empty_list_operations();
-    // printf("test_empty_list_operations passed\n");
+    test_list_join();
+    printf("test_list_join passed\n");
+
+    test_empty_list_operations();
+    printf("test_empty_list_operations passed\n");
 
     printf("All tests passed!\n");
     return 0;

@@ -1644,7 +1644,7 @@ void *dictFindPositionForInsert(dict *d, const void *key, dictEntry **existing) 
     unsigned long idx, table;
     dictEntry *he;
     // 返回 key 对应的 hash, useStoredKeyApi 
-    printf("dictHashKey...\n");
+    // printf("dictHashKey...\n");
     uint64_t hash = dictHashKey(d, key, d->useStoredKeyApi);
     if (existing) *existing = NULL;
     /* 计算在第一个哈希表中的索引 */
