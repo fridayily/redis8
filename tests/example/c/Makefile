@@ -1,5 +1,5 @@
 # 测试程序名称
-TEST_NAME = test_adlist test_sds
+TEST_NAME = test_adlist test_sds test_dict
 
 
 # Redis 源码路径（假设当前目录是 tests/example/c）
@@ -24,7 +24,11 @@ endif
 
 # 链接参数
 LDFLAGS = -g
-LDLIBS = $(REDIS_SRC)/src/adlist.o \
+LDLIBS = $(REDIS_SRC)/src/dict.o \
+          $(REDIS_SRC)/src/siphash.o \
+          $(REDIS_SRC)/src/monotonic.o \
+          $(REDIS_SRC)/src/mt19937-64.o \
+         $(REDIS_SRC)/src/adlist.o \
          $(REDIS_SRC)/src/zmalloc.o \
          $(REDIS_SRC)/src/sds.o \
          $(REDIS_SRC)/src/util.o \
@@ -39,6 +43,11 @@ endif
 .PHONY: all test clean
 # 构建目标
 all: $(TEST_NAME)
+
+
+# 编译规则
+test_dict: test_dict.c
+	$(CC) $(CFLAGS) -DCMOCKA_TEST $< $(LDLIBS) -o $@
 
 # 编译规则
 test_adlist: test_adlist.c

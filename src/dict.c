@@ -82,6 +82,8 @@ static inline keyCmpFunc dictGetKeyCmpFunc(dict *d) {
     return dictDefaultCompare;
 }
 
+/* 如果isStoredKey为真且字典类型定义了storedHashFunction 
+  则使用 storedHashFunction 计算哈希值, 这允许以不同方式存储和查找键，而无需转换 */
 static inline uint64_t dictHashKey(dict *d, const void *key, int isStoredKey) {
     if (isStoredKey && d->type->storedHashFunction)
         return d->type->storedHashFunction(key);
@@ -257,7 +259,11 @@ int _dictResize(dict *d, unsigned long size, int* malloc_failed)
 
     /* Prepare a second hash table for incremental rehashing.
      * We do this even for the first initialization, so that we can trigger the
-     * rehashingStarted more conveniently, we will clean it up right after. */
+     * rehashingStarted more conveniently, we will clean it up right after. 
+     * 设置第二个哈希表的大小指数
+     * 初始化第二个哈希表的已使用桶数量（初始为0）
+     * 将新分配的哈希表指针赋值给第二个表
+     * */
     d->ht_size_exp[1] = new_ht_size_exp;
     d->ht_used[1] = new_ht_used;
     d->ht_table[1] = new_ht_table;
@@ -1637,25 +1643,36 @@ static signed char _dictNextExp(unsigned long size)
 void *dictFindPositionForInsert(dict *d, const void *key, dictEntry **existing) {
     unsigned long idx, table;
     dictEntry *he;
+    // 返回 key 对应的 hash, useStoredKeyApi 
+    printf("dictHashKey...\n");
     uint64_t hash = dictHashKey(d, key, d->useStoredKeyApi);
     if (existing) *existing = NULL;
+    /* 计算在第一个哈希表中的索引 */
     idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[0]);
 
     /* Rehash the hash table if needed */
+    /*根据需要执行重新哈希步骤*/
     _dictRehashStepIfNeeded(d,idx);
 
     /* Expand the hash table if needed */
+    /* 根据需要扩展哈希表 */
     _dictExpandIfNeeded(d);
     keyCmpFunc cmpFunc = dictGetKeyCmpFunc(d);
 
     for (table = 0; table <= 1; table++) {
+        /* rehashidx 记录 rehash 的进度, 没有进行时值为 -1 */
         if (table == 0 && (long)idx < d->rehashidx) continue; 
+        /* hash 表大小为 16, ht_size_exp = 4 则 DICTHT_SIZE_MASK = 2^16 -1 
+           即 16 个1 ,和 key 的 hash 值相与得到索引
+            */
         idx = hash & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
         /* Search if this slot does not already contain the given key */
         he = d->ht_table[table][idx];
         while(he) {
+            /* 遍历链表查找匹配的键 */
             void *he_key = dictGetKey(he);
             if (key == he_key || cmpFunc(d, key, he_key)) {
+                /* 如果找到相同的键，返回 NULL 并设置 existing 参数 */
                 if (existing) *existing = he;
                 return NULL;
             }

@@ -46,3 +46,4 @@ build/
 modules/vector-sets/expr-test
 tests/example/c/test_adlist
 tests/example/c/test_sds
+tests/example/c/test_dict

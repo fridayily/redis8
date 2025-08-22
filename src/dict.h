@@ -69,6 +69,9 @@ typedef struct dictType {
     /* Ensures that the entire hash table is rehashed at once if set. */
     unsigned int force_full_rehash:1;
 
+    /*
+    允许以一种方式存储键，但以另一种方式查找键，而无需进行转换。
+    */
     /* Sometimes we want the ability to store a key in a given way inside the hash
      * function, and lookup it in some other way without resorting to any kind of
      * conversion. For instance the key may be stored as a structure also
@@ -107,6 +110,12 @@ typedef struct dictType {
 struct dict {
     dictType *type;
 
+    // 声明创建了一个包含两个元素的数组，每个元素都是一个指向 dictEntry* 的指针
+    // ht_table[0] 指向第一个哈希表
+    // ht_table[1] 指向第二个哈希表
+    // 占用 16 字节
+    //    ht_table[0] -> [bucket0][bucket1][bucket2]...[bucketN-1]
+    //    ht_table[1] -> [bucket0][bucket1][bucket2]...[bucketM-1]
     dictEntry **ht_table[2];
     unsigned long ht_used[2];
 
@@ -116,6 +125,7 @@ struct dict {
     unsigned pauserehash : 15; /* If >0 rehashing is paused */
 
     unsigned useStoredKeyApi : 1; /* See comment of storedHashFunction above */
+    /* 如果 hash 表大小是 16, ht_size_exp = 4 */
     signed char ht_size_exp[2]; /* exponent of size. (size = 1<<exp) */
     int16_t pauseAutoResize;  /* If >0 automatic resizing is disallowed (<0 indicates coding error) */
     void *metadata[];
