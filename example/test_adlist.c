@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "adlist.h"
-#include "test_common.h"
+#include "../tests/example/c/test_common.h"
 
 // 自定义值复制函数（可选）
 void *dupStringValue(void *value)
