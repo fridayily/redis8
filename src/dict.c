@@ -119,6 +119,10 @@ uint64_t dictGenCaseHashFunction(const unsigned char *buf, size_t len) {
 
 /* --------------------- dictEntry pointer bit tricks ----------------------  */
 
+/*
+ * 内存分配器通常会保证指针对齐到特定边界,最低 3 位为 0
+ * 这里修改最低 3 位的值标记 dictEntry 类型
+ */
 /* The 3 least significant bits in a pointer to a dictEntry determines what the
  * pointer actually points to. If the least bit is set, it's a key. Otherwise,
  * the bit pattern of the least 3 significant bits mark the kind of entry. */
@@ -225,7 +229,9 @@ int _dictInit(dict *d, dictType *type)
 
 /* Resize or create the hash table,
  * when malloc_failed is non-NULL, it'll avoid panic if malloc fails (in which case it'll be set to 1).
- * Returns DICT_OK if resize was performed, and DICT_ERR if skipped. */
+ * Returns DICT_OK if resize was performed, and DICT_ERR if skipped.
+ * 可以缩容也可以扩容
+ */
 int _dictResize(dict *d, unsigned long size, int* malloc_failed)
 {
     if (malloc_failed) *malloc_failed = 0;
@@ -260,14 +266,16 @@ int _dictResize(dict *d, unsigned long size, int* malloc_failed)
     /* Prepare a second hash table for incremental rehashing.
      * We do this even for the first initialization, so that we can trigger the
      * rehashingStarted more conveniently, we will clean it up right after. 
-     * 设置第二个哈希表的大小指数
+     * 每次都会设置第二个哈希表方便进行 rehash, 如果是第一次初始化, 之后代码会清空这个 hash 表
      * 初始化第二个哈希表的已使用桶数量（初始为0）
      * 将新分配的哈希表指针赋值给第二个表
      * */
     d->ht_size_exp[1] = new_ht_size_exp;
     d->ht_used[1] = new_ht_used;
     d->ht_table[1] = new_ht_table;
+    // 设置为0 ,说明可以开始 rehash
     d->rehashidx = 0;
+    // 如果设置了 rehashingStarted, 则开始 rehash
     if (d->type->rehashingStarted) d->type->rehashingStarted(d);
 
     /* Is this the first initialization or is the first hash table empty? If so
@@ -279,7 +287,7 @@ int _dictResize(dict *d, unsigned long size, int* malloc_failed)
         d->ht_size_exp[0] = new_ht_size_exp;
         d->ht_used[0] = new_ht_used;
         d->ht_table[0] = new_ht_table;
-        _dictReset(d, 1);
+        _dictReset(d, 1); // 这里将第二个 hash 表初始化为 0
         d->rehashidx = -1;
         return DICT_OK;
     }
@@ -323,24 +331,46 @@ int dictShrink(dict *d, unsigned long size) {
 }
 
 /* Helper function for `dictRehash` and `dictBucketRehash` which rehashes all the keys
- * in a bucket at index `idx` from the old to the new hash HT. */
+ * in a bucket at index `idx` from the old to the new hash HT.
+ * idx 0 号 hash 表的桶的索引号
+ */
 static void rehashEntriesInBucketAtIndex(dict *d, uint64_t idx) {
+    // 获取旧哈希表中指定索引位置的链表头节点
     dictEntry *de = d->ht_table[0][idx];
     uint64_t h;
     dictEntry *nextde;
+    // 遍历整个链表
+    // 假设表 1 的 3 号桶有链表 A->B->C
+    // 处理
+    //    保存 nextde = B
+    //    A 重新 hash 后为 3 ,则将表 2 的 3号 bucket 的链表添加到 A 后面
+    //    将 A 开头的链表添加到表 2 的 3号 bucket, 形成 A->(原来的头部)
+    // 处理 B
+    //    保存 nextde = C
+    //    B 重新 hash 后为 4 ,则将表 2 的 4号 bucket 的链表添加到 B 后面
+    //    将 B 开头的链表添加到表 2 的 4 号 bucket, 形成 B->(原来的头部)
+    // 处理 C
+    //    nextde = NULL
+    //    C 重新 hash 后为 3 ,则将表 2 的 3号 bucket 的链表添加到 C 后面
+    //    将 C 开头的链表添加到表 2 的 3号 bucket, 形成 C->A->(原来的头部)
     while (de) {
+        // 取 de 的下一个节点
         nextde = dictGetNext(de);
         void *key = dictGetKey(de);
         /* Get the index in the new hash table */
         if (d->ht_size_exp[1] > d->ht_size_exp[0]) {
+            // 扩容情况：重新计算哈希值
             h = dictHashKey(d, key, 1) & DICTHT_SIZE_MASK(d->ht_size_exp[1]);
         } else {
             /* We're shrinking the table. The tables sizes are powers of
              * two, so we simply mask the bucket index in the larger table
-             * to get the bucket index in the smaller table. */
+             * to get the bucket index in the smaller table.
+             * 缩容情况：由于表大小是2的幂，可以通过简单的位掩码操作将大表的索引映射到小表的索引
+             */
             h = idx & DICTHT_SIZE_MASK(d->ht_size_exp[1]);
         }
         if (d->type->no_value) {
+            // 处理无值字典的情况（集合等）
             if (!d->ht_table[1][h]) {
                 /* The destination bucket is empty, allowing the key to be stored 
                  * directly without allocating a dictEntry. If an old entry was 
@@ -353,17 +383,22 @@ static void rehashEntriesInBucketAtIndex(dict *d, uint64_t idx) {
                     de = encodeMaskedPtr(key, ENTRY_PTR_IS_EVEN_KEY);
                 
             } else if (entryIsKey(de)) {
-                /* We don't have an allocated entry but we need one. */
+                /* We don't have an allocated entry but we need one.
+                 * 当前是键指针但目标bucket非空，需要创建无值条目
+                 */
                 de = createEntryNoValue(key, d->ht_table[1][h]);
             } else {
                 /* Just move the existing entry to the destination table and
-                 * update the 'next' field. */
+                 * update the 'next' field.
+                 * 将 1 号 hash 表 h 桶的链表链接到 0 号 hash 表
+                 */
                 assert(entryIsNoValue(de));
                 dictSetNext(de, d->ht_table[1][h]);
             }
         } else {
             dictSetNext(de, d->ht_table[1][h]);
         }
+        // 将 0 号 hash 表 h 桶的链表链接到 1 号 hash 表
         d->ht_table[1][h] = de;
         d->ht_used[0]--;
         d->ht_used[1]++;
@@ -638,6 +673,7 @@ int dictReplace(dict *d, void *key, void *val)
  * See dictAddRaw() for more information. */
 dictEntry *dictAddOrFind(dict *d, void *key) {
     dictEntry *entry, *existing;
+    // 如果键存在, entry 为 NULL
     entry = dictAddRaw(d,key,&existing);
     return entry ? entry : existing;
 }
@@ -858,18 +894,23 @@ dictEntry *dictTwoPhaseUnlinkFind(dict *d, const void *key, dictEntry ***plink, 
 
     for (table = 0; table <= 1; table++) {
         idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
+        // 如果是第一个表且索引小于rehash索引，则跳过（该bucket已经迁移）
         if (table == 0 && (long)idx < d->rehashidx) continue;
+        // 获取bucket的头指针
         dictEntry **ref = &d->ht_table[table][idx];
         while (ref && *ref) {
             void *de_key = dictGetKey(*ref);
             if (key == de_key || cmpFunc(d, key, de_key)) {
                 *table_index = table;
                 *plink = ref;
+                // 暂停rehash以保证操作的原子性
                 dictPauseRehashing(d);
                 return *ref;
             }
+            // 移动到下一个条目
             ref = dictGetNextRef(*ref);
         }
+        // 如果没有在进行rehash，退出循环
         if (!dictIsRehashing(d)) return NULL;
     }
     return NULL;
@@ -1079,6 +1120,9 @@ dictIterator *dictGetSafeIterator(dict *d) {
     return i;
 }
 
+// 先选取 0 号 hash 表
+// 先遍历 0 号 bucket 下的链表,再 遍历 1 号 bucket 下的链表
+// 再选取 1 号 hash 表, 执行相同操作
 dictEntry *dictNext(dictIterator *iter)
 {
     while (1) {
@@ -1103,10 +1147,13 @@ dictEntry *dictNext(dictIterator *iter)
                     break;
                 }
             }
+            // 选取其中一个 hash 表的第 index 个 bucket
+            // 该 bucket 存储的是 hash 值相同的一个链表
             iter->entry = iter->d->ht_table[iter->table][iter->index];
         } else {
             iter->entry = iter->nextEntry;
         }
+        // 迭代器会先遍历 hash 值相同的 entry
         if (iter->entry) {
             /* We need to save the 'next' here, the iterator user
              * may delete the entry we are returning. */
@@ -1152,7 +1199,9 @@ dictEntry *dictGetRandomKey(dict *d)
     /* Now we found a non empty bucket, but it is a linked
      * list and we need to get a random element from the list.
      * The only sane way to do so is counting the elements and
-     * select a random index. */
+     * select a random index.
+     * 获得了一个非空的 bucket, 先计算这个 bucket 下链表的长度, 再从中随机选取一个节点
+     */
     listlen = 0;
     orighe = he;
     while(he) {
@@ -1416,11 +1465,26 @@ static unsigned long rev(unsigned long v) {
  *
  * 1) It is possible we return elements more than once. However this is usually
  *    easy to deal with in the application level.
+ *     在 ht[0] 遍历到某个元素后,该元素迁移到新表 ht[1] 中, SCAN 会再次遇到该元素,导致重复返回
  * 2) The iterator must return multiple elements per call, as it needs to always
  *    return all the keys chained in a given bucket, and all the expansions, so
  *    we are sure we don't miss keys moving during rehashing.
  * 3) The reverse cursor is somewhat hard to understand at first, but this
  *    comment is supposed to help.
+ */
+/*
+ * 下一个游标的操作为 反转 +1 再反转
+ * 000  0
+ * 100  4
+ * 010  2
+ * 110  6
+ * 001  1
+ * 101  5
+ * 011  3
+ * 111  7
+ * 扩容前 mask 为 111, 扩容后为 1111
+ * 000 会 hash 到 0000/1000 ,即用索引 0(000) 去遍历表0和表1 的 0(000) 号桶,可遍历到所有原来0号桶的元素
+ * 100 会 hash 到 0100/1100 ,即用索引 4(100) 去遍历表0和表1 的 4(100) 号桶,可遍历到所有原来0号桶的元素
  */
 unsigned long dictScan(dict *d,
                        unsigned long v,
@@ -1494,9 +1558,11 @@ unsigned long dictScanDefrag(dict *d,
         if (defragfns) {
             dictDefragBucket(&d->ht_table[htidx0][v & m0], defragfns);
         }
+        // v 是游标
         de = d->ht_table[htidx0][v & m0];
         while (de) {
             next = dictGetNext(de);
+            // 从 table0 收集数据到 privdata 中
             fn(privdata, de);
             de = next;
         }
@@ -1511,6 +1577,7 @@ unsigned long dictScanDefrag(dict *d,
             de = d->ht_table[htidx1][v & m1];
             while (de) {
                 next = dictGetNext(de);
+                //从 table0 收集数据到 privdata 中, 可能由于 rehash 重复收集元素
                 fn(privdata, de);
                 de = next;
             }
@@ -1534,7 +1601,9 @@ unsigned long dictScanDefrag(dict *d,
 
 /* Because we may need to allocate huge memory chunk at once when dict
  * resizes, we will check this allocation is allowed or not if the dict
- * type has resizeAllowed member function. */
+ * type has resizeAllowed member function.
+ * 可以自定义 resizeAllowed 函数
+ */
 static int dictTypeResizeAllowed(dict *d, size_t size) {
     if (d->type->resizeAllowed == NULL) return 1;
     return d->type->resizeAllowed(
@@ -1597,6 +1666,8 @@ int dictShrinkIfNeeded(dict *d) {
         (dict_can_resize != DICT_RESIZE_FORBID &&
          d->ht_used[0] * HASHTABLE_MIN_FILL * dict_force_resize_ratio <= DICTHT_SIZE(d->ht_size_exp[0])))
     {
+        // 已使用 4 , buckets 32
+        // 执行 dictShrink(d,4)
         if (dictTypeResizeAllowed(d, d->ht_used[0]))
             dictShrink(d, d->ht_used[0]);
         return DICT_OK;
@@ -1669,7 +1740,7 @@ void *dictFindPositionForInsert(dict *d, const void *key, dictEntry **existing) 
         /* Search if this slot does not already contain the given key */
         he = d->ht_table[table][idx];
         while(he) {
-            /* 遍历链表查找匹配的键 */
+            /* 遍历链表查找匹配的键, 目的是看键是否存在 */
             void *he_key = dictGetKey(he);
             if (key == he_key || cmpFunc(d, key, he_key)) {
                 /* 如果找到相同的键，返回 NULL 并设置 existing 参数 */
@@ -1766,15 +1837,18 @@ dictStats *dictGetStatsHt(dict *d, int htidx, int full) {
     stats->clvector = clvector;
     stats->htSize = DICTHT_SIZE(d->ht_size_exp[htidx]);
     stats->htUsed = d->ht_used[htidx];
+    // 如果不需要完整统计信息，直接返回基本统计
     if (!full) return stats;
     /* Compute stats. */
     for (unsigned long i = 0; i < DICTHT_SIZE(d->ht_size_exp[htidx]); i++) {
         dictEntry *he;
 
         if (d->ht_table[htidx][i] == NULL) {
+            // 链表长度为 0 的 bucket 个数
             clvector[0]++;
             continue;
         }
+        // 非空 bucket 的个数
         stats->buckets++;
         /* For each hash entry on this slot... */
         unsigned long chainlen = 0;
@@ -1783,8 +1857,11 @@ dictStats *dictGetStatsHt(dict *d, int htidx, int full) {
             chainlen++;
             he = dictGetNext(he);
         }
+        // 统计长度为 chainlen 的 bucket 个数
         clvector[(chainlen < DICT_STATS_VECTLEN) ? chainlen : (DICT_STATS_VECTLEN-1)]++;
+        // 更新最长的链表长度
         if (chainlen > stats->maxChainLen) stats->maxChainLen = chainlen;
+        // 链表长度累计和
         stats->totalChainLen += chainlen;
     }
 

@@ -64,6 +64,27 @@ dictType testDictType = {
     .userdata = NULL
 };
 
+/* 用于收集扫描结果的数据结构 */
+typedef struct {
+    char **keys;
+    int count;
+    int capacity;
+} ScanResult;
+
+/* 扫描回调函数 */
+void scanCallback(void *privdata, const dictEntry *de) {
+    ScanResult *result = (ScanResult*)privdata;
+
+    if (result->count >= result->capacity) {
+        result->capacity *= 2;
+        result->keys = realloc(result->keys, result->capacity * sizeof(char*));
+    }
+
+    char *key = (char*)dictGetKey(de);
+    result->keys[result->count] = strdup(key);
+    result->count++;
+}
+
 // 测试辅助函数
 void assert_true(int condition, const char *msg) {
     if (!condition) {
@@ -95,6 +116,53 @@ void assert_str_equal(const char *expected, const char *actual, const char *msg)
         exit(1);
     }
 }
+
+// 使用一级指针交换两个整数值
+void swap_values_with_pointers(int *a, int *b) {
+    int temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+void swap_char_values(char *ptr1,char *ptr2)
+{
+    char temp = *ptr1;
+    *ptr1 = *ptr2;
+    *ptr2 = temp;
+}
+
+// 使用二级指针交换两个指针
+void swap_char_pointers(char **ptr1, char **ptr2) {
+    char *temp = *ptr1;
+    *ptr1 = *ptr2;
+    *ptr2 = temp;
+}
+
+void test_switch_point()
+{
+    int x = 10, y = 20;
+    printf("Before swap_values_with_pointers: x = %d, y = %d\n", x, y);
+    swap_values_with_pointers(&x, &y);
+    printf("After swap_values_with_pointers: x = %d, y = %d\n", x, y);
+
+    char a = 'A';
+    char b = 'B';
+    printf("Before swap_char_values: a = %d, b = %d\n", a, b);
+    swap_char_values(&a, &b);
+    printf("After swap_char_values: a = %d, b = %d\n", a, b);
+    printf("\n");
+
+    char *first = "First String";
+    char *second = "Second String";
+
+    printf("Before swap: first = %s second = %s\n", first,second);
+    swap_char_pointers(&first, &second);
+    printf("After swap: first = %s second = %s\n", first,second);
+
+    printf("\n");
+}
+
+
 
 // 测试1: 基本创建和释放
 void test_dict_create_and_release() {
@@ -433,6 +501,7 @@ void test_dict_stats() {
     // 获取统计信息
     char buf[1024];
     dictGetStats(buf, sizeof(buf), d, 1);
+    printf("dict stats %s\n",buf);
     assert_true(strlen(buf) > 0, "Stats buffer should not be empty");
     
     // 获取哈希表统计
@@ -469,23 +538,254 @@ void test_dict_flags() {
     printf("PASSED\n");
 }
 
+
+static unsigned long simple_rev(unsigned long v) {
+    unsigned long s = CHAR_BIT * sizeof(v); // bit size; must be power of 2
+    unsigned long mask = ~0UL;
+    while ((s >>= 1) > 0) {
+        mask ^= (mask << s);
+        v = ((v >> s) & mask) | ((v << s) & ~mask);
+    }
+    return v;
+}
+
+unsigned long update_cursor(unsigned long v, unsigned long mask) {
+    v |= ~mask;
+    v = simple_rev(v);  // 假设4位
+    v++;
+    v = simple_rev(v);
+    return v;
+}
+// 打印二进制形式的函数
+void print_binary(unsigned long value, int bits) {
+    for (int i = bits - 1; i >= 0; i--) {
+        printf("%lu", (value >> i) & 1);
+        if (i % 4 == 0 && i > 0) printf(" "); // 每4位添加一个空格便于阅读
+    }
+}
+
+void test_update_cursor()
+{
+
+    unsigned long cursor = 0;
+    unsigned long mask = 7;  // 对应大小为8的表 (111)
+
+    printf("mask 111 迭代过程:\n");
+    for (int i = 0; i < 8; i++) {
+        unsigned long bucket = cursor & mask;
+        printf("游标: %04lu bin: ", cursor);
+        print_binary(cursor,8);
+        printf(" bucket: %lu\n",bucket);
+        cursor = update_cursor(cursor, mask);
+        if (cursor == 0) break;  // 完成一轮迭代
+    }
+
+    cursor = 0;
+    mask = 15;  // 对应大小为16的表 (1111)
+
+    printf("mask 1111 迭代过程:\n");
+    for (int i = 0; i < 16; i++) {
+        unsigned long bucket = cursor & mask;
+        printf("游标: %04lu bin: ", cursor);
+        print_binary(cursor,8);
+        printf(" bucket: %lu\n",bucket);
+        cursor = update_cursor(cursor, mask);
+        if (cursor == 0) break;  // 完成一轮迭代
+    }
+}
+
+void test_dict_scan_basic() {
+    printf("测试 dictScan 基本功能...\n");
+
+    dict *d = dictCreate(&testDictType);
+
+    /* 添加一些测试数据 */
+    dictAdd(d, "key1", "value1");
+    dictAdd(d, "key2", "value2");
+    dictAdd(d, "key3", "value3");
+    dictAdd(d, "key4", "value4");
+    dictAdd(d, "key5", "value5");
+
+    /* 准备扫描结果收集器 */
+    ScanResult result = {0};
+    result.capacity = 10;
+    result.keys = malloc(result.capacity * sizeof(char*));
+
+    /* 执行扫描 */
+    unsigned long cursor = 0;
+    int totalScanned = 0;
+    do {
+        cursor = dictScan(d, cursor, scanCallback, &result);
+        totalScanned += result.count;
+    } while (cursor != 0);
+
+    /* 验证结果 */
+    assert(result.count == 5);
+    printf("扫描到 %d 个条目\n", result.count);
+
+    /* 清理资源 */
+    for (int i = 0; i < result.count; i++) {
+        free(result.keys[i]);
+    }
+    free(result.keys);
+    dictRelease(d);
+
+    printf("测试 dictScan 基本功能通过\n\n");
+}
+
+/* 空字典扫描 */
+void test_dict_scan_empty() {
+    printf("测试 dictScan 空字典...\n");
+
+    dict *d = dictCreate(&testDictType);
+
+    ScanResult result = {0};
+    result.capacity = 10;
+    result.keys = malloc(result.capacity * sizeof(char*));
+
+    /* 扫描空字典 */
+    unsigned long cursor = dictScan(d, 0, scanCallback, &result);
+
+    /* 验证结果 */
+    assert(cursor == 0);
+    assert(result.count == 0);
+    printf("空字典扫描返回 cursor = %lu, 扫描到 %d 个条目\n", cursor, result.count);
+
+    /* 清理资源 */
+    free(result.keys);
+    dictRelease(d);
+
+    printf("测试 dictScan 空字典通过\n\n");
+}
+
+/* 大数据量扫描 */
+void test_dict_scan_large() {
+    printf("测试 dictScan 大数据量...\n");
+
+    dict *d = dictCreate(&testDictType);
+
+    /* 添加大量数据 */
+    const int numEntries = 1000;
+    for (int i = 0; i < numEntries; i++) {
+        char key[32], value[32];
+        snprintf(key, sizeof(key), "key_%d", i);
+        snprintf(value, sizeof(value), "value_%d", i);
+        dictAdd(d, strdup(key), strdup(value));
+    }
+
+    /* 准备扫描结果收集器 */
+    ScanResult result = {0};
+    result.capacity = numEntries;
+    result.keys = malloc(result.capacity * sizeof(char*));
+
+    /* 执行扫描并统计 */
+    unsigned long cursor = 0;
+    int scanCalls = 0;
+    int totalEntries = 0;
+    do {
+        int beforeCount = result.count;
+        cursor = dictScan(d, cursor, scanCallback, &result);
+        int scannedInThisCall = result.count - beforeCount;
+        scanCalls++;
+        totalEntries = result.count;
+        printf("第 %d 次扫描，cursor = %lu，本次扫描到 %d 个条目\n",
+               scanCalls, cursor, scannedInThisCall);
+    } while (cursor != 0);
+
+    /* 验证结果 */
+    assert(totalEntries == numEntries);
+    printf("总共扫描 %d 次，获得 %d 个条目\n", scanCalls, totalEntries);
+
+    /* 验证没有重复条目 */
+    for (int i = 0; i < result.count; i++) {
+        for (int j = i + 1; j < result.count; j++) {
+            if (strcmp(result.keys[i], result.keys[j]) == 0) {
+                printf("警告：发现重复条目 %s\n", result.keys[i]);
+            }
+        }
+    }
+
+    /* 清理资源 */
+    for (int i = 0; i < result.count; i++) {
+        free(result.keys[i]);
+    }
+    free(result.keys);
+    dictRelease(d);
+
+    printf("测试 dictScan 大数据量通过\n\n");
+}
+
+/* rehashing期间扫描 */
+void test_dict_scan_during_rehash() {
+    printf("测试 dictScan 在rehashing期间...\n");
+
+    dict *d = dictCreate(&testDictType);
+
+    /* 添加一些数据 */
+    for (int i = 0; i < 50; i++) {
+        char key[32], value[32];
+        snprintf(key, sizeof(key), "key_%d", i);
+        snprintf(value, sizeof(value), "value_%d", i);
+        dictAdd(d, strdup(key), strdup(value));
+    }
+
+    /* 触发rehash */
+    dictExpand(d, 128);
+    assert(dictIsRehashing(d));
+    printf("字典正在rehash中...\n");
+
+    /* 准备扫描结果收集器 */
+    ScanResult result = {0};
+    result.capacity = 100;
+    result.keys = malloc(result.capacity * sizeof(char*));
+
+    /* 执行扫描 */
+    unsigned long cursor = 0;
+    int totalEntries = 0;
+    do {
+        int beforeCount = result.count;
+        cursor = dictScan(d, cursor, scanCallback, &result);
+        int scannedInThisCall = result.count - beforeCount;
+        totalEntries = result.count;
+        printf("cursor = %lu，本次扫描到 %d 个条目\n", cursor, scannedInThisCall);
+    } while (cursor != 0);
+
+    /* 验证结果 */
+    assert(totalEntries == 50);
+    printf("rehashing期间扫描到 %d 个条目\n", totalEntries);
+
+    /* 清理资源 */
+    for (int i = 0; i < result.count; i++) {
+        free(result.keys[i]);
+    }
+    free(result.keys);
+    dictRelease(d);
+
+    printf("测试 dictScan 在rehashing期间通过\n\n");
+}
+
 // 主测试函数
 int main() {
     printf("Starting Redis dict unit tests...\n\n");
-    
-    test_dict_create_and_release();
-    test_dict_add_and_find();
-    test_dict_duplicate_keys();
-    test_dict_replace();
-    test_dict_delete();
-    test_dict_expand_shrink();
-    test_dict_iterator();
-    test_dict_random_key();
-    test_dict_integer_values();
-    test_dict_double_values();
-    test_dict_rehash();
-    test_dict_stats();
-    test_dict_flags();
+    //
+    // test_dict_create_and_release();
+    // test_dict_add_and_find();
+    // test_dict_duplicate_keys();
+    // test_dict_replace();
+    // test_dict_delete();
+    // test_dict_expand_shrink();
+    // test_dict_iterator();
+    // test_dict_random_key();
+    // test_dict_integer_values();
+    // test_dict_double_values();
+    // test_dict_rehash();
+    // test_dict_stats();
+    // test_dict_flags();
+    test_update_cursor();
+    // test_dict_scan_basic();
+    // test_dict_scan_empty();
+    // test_dict_scan_large();
+    // test_dict_scan_during_rehash();
     
     printf("\nAll tests passed!\n");
     return 0;

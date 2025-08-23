@@ -117,6 +117,7 @@ struct dict {
     //    ht_table[0] -> [bucket0][bucket1][bucket2]...[bucketN-1]
     //    ht_table[1] -> [bucket0][bucket1][bucket2]...[bucketM-1]
     dictEntry **ht_table[2];
+    // 已使用的条目数
     unsigned long ht_used[2];
 
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
