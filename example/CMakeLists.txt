@@ -41,12 +41,53 @@ set(REDIS_DICT_SOURCES
         ${REDIS_SRC}/src/sha256.c
 )
 
+set(TEST_ZSET_SOURCES
+        test_t_zset.c
+        ${REDIS_SRC}/src/sds.c
+        ${REDIS_SRC}/src/zmalloc.c
+        ${REDIS_SRC}/src/util.c
+        ${REDIS_SRC}/src/monotonic.c
+        ${REDIS_SRC}/src/mt19937-64.c
+        ${REDIS_SRC}/deps/fpconv/fpconv_dtoa.c
+        ${REDIS_SRC}/deps/fast_float/fast_float_strtod.cpp
+        ${REDIS_SRC}/src/sha256.c
+        ${REDIS_SRC}/src/intset.c
+)
+
+set(TEST_LISTPACK_SOURCES
+        ${REDIS_SRC}/src/listpack.c
+        ${REDIS_SRC}/src/util.c
+        ${REDIS_SRC}/src/zmalloc.c
+        ${REDIS_SRC}/deps/fpconv/fpconv_dtoa.c
+        ${REDIS_SRC}/src/sds.c
+        ${REDIS_SRC}/src/sha256.c
+        ${REDIS_SRC}/deps/fast_float/fast_float_strtod.cpp
+)
+
+set(TEST_LISTPACK_INTERNAL_SOURCES
+        ${REDIS_SRC}/src/adlist.c
+        ${REDIS_SRC}/src/util.c
+        ${REDIS_SRC}/src/sds.c
+        ${REDIS_SRC}/src/zmalloc.c
+        ${REDIS_SRC}/src/sha256.c
+        ${REDIS_SRC}/deps/fast_float/fast_float_strtod.cpp
+        ${REDIS_SRC}/deps/fpconv/fpconv_dtoa.c
+        ${REDIS_SRC}/src/redisassert.c
+)
+
 # 创建测试可执行文件，将源文件直接包含在内
 add_executable(test_adlist test_adlist.c ${REDIS_LIST_SOURCES})
 add_executable(test_sds test_sds.c ${REDIS_SDS_SOURCES})
 add_executable(test_dict test_dict.c ${REDIS_DICT_SOURCES})
+add_executable(test_listpack test_listpack.c ${TEST_LISTPACK_SOURCES})
+add_executable(test_listpack_internal test_listpack_internal.c ${TEST_LISTPACK_INTERNAL_SOURCES})
+
+add_executable(test_t_zset test_t_zset.c)  # 添加 zset 测试目标
+
 
 # 链接系统库
 target_link_libraries(test_adlist m pthread)
 target_link_libraries(test_sds m pthread)
 target_link_libraries(test_dict m pthread)
+target_link_libraries(test_listpack_internal m pthread)
+target_link_libraries(test_t_zset hiredis m pthread)

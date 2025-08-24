@@ -182,6 +182,7 @@ robj *lookupKey(redisDb *db, robj *key, int flags, dictEntry **deref) {
             }
         }
 
+        // 键空间命中统计
         if (!(flags & (LOOKUP_NOSTATS | LOOKUP_WRITE)))
             server.stat_keyspace_hits++;
         /* TODO: Use separate hits stats for WRITE */
@@ -277,6 +278,10 @@ dictEntry *dbAdd(redisDb *db, robj *key, robj *val) {
     return dbAddInternal(db, key, val, 0);
 }
 
+/*
+ *  calculateKeySlot总是重新计算CRC哈希，不使用缓存
+ *  getKeySlot可能会使用来自current_client的缓存槽位信息
+ */
 /* Returns key's hash slot when cluster mode is enabled, or 0 when disabled.
  * The only difference between this function and getKeySlot, is that it's not using cached key slot from the current_client
  * and always calculates CRC hash.

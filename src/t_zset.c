@@ -354,7 +354,7 @@ zskiplistNode *zslNthInRange(zskiplist *zsl, zrangespec *range, long n) {
         if (n < ZSKIPLIST_MAX_SEARCH) {
             /* If offset is small, we can just jump node by node */
             /* rank+1 is the first element in range, so we need n+1 steps to reach target. */
-            for (i = 0; i < n + 1; i++) { 
+            for (i = 0; i < n + 1; i++) {
                 x = x->level[0].forward;
             }
         } else {
@@ -721,11 +721,11 @@ zskiplistNode *zslNthInLexRange(zskiplist *zsl, zlexrangespec *range, long n) {
             }
         }
         /* Check if zsl is long enough. */
-        if ((unsigned long)(edge_rank + n) >= zsl->length) return NULL; 
+        if ((unsigned long)(edge_rank + n) >= zsl->length) return NULL;
         if (n < ZSKIPLIST_MAX_SEARCH) {
             /* If offset is small, we can just jump node by node */
             /* rank+1 is the first element in range, so we need n+1 steps to reach target. */
-            for (i = 0; i < n + 1; i++) { 
+            for (i = 0; i < n + 1; i++) {
                 x = x->level[0].forward;
             }
         } else {
@@ -1219,7 +1219,7 @@ unsigned long zsetLength(const robj *zobj) {
  * and the value len hint indicates the approximate individual size of the added elements,
  * they are used to determine the initial representation.
  *
- * If the hints are not known, and underestimation or 0 is suitable. 
+ * If the hints are not known, and underestimation or 0 is suitable.
  * We should never pass a negative value because it will convert to a very large unsigned number. */
 robj *zsetTypeCreate(size_t size_hint, size_t val_len_hint) {
     if (size_hint <= server.zset_max_listpack_entries &&
@@ -1365,7 +1365,7 @@ int zsetScore(robj *zobj, sds member, double *score) {
 /* Add a new element or update the score of an existing element in a sorted
  * set, regardless of its encoding.
  *
- * The set of flags change the command behavior. 
+ * The set of flags change the command behavior.
  *
  * The input flags are the following:
  *
@@ -1374,9 +1374,9 @@ int zsetScore(robj *zobj, sds member, double *score) {
  *            assume 0 as previous score.
  * ZADD_NX:   Perform the operation only if the element does not exist.
  * ZADD_XX:   Perform the operation only if the element already exist.
- * ZADD_GT:   Perform the operation on existing elements only if the new score is 
+ * ZADD_GT:   Perform the operation on existing elements only if the new score is
  *            greater than the current score.
- * ZADD_LT:   Perform the operation on existing elements only if the new score is 
+ * ZADD_LT:   Perform the operation on existing elements only if the new score is
  *            less than the current score.
  *
  * When ZADD_INCR is used, the new score of the element is stored in
@@ -1625,7 +1625,7 @@ long zsetRank(robj *zobj, sds ele, int reverse, double *output_score) {
         }
 
         if (eptr != NULL) {
-            if (output_score) 
+            if (output_score)
                 *output_score = zzlGetScore(sptr);
             if (reverse)
                 return llen-rank;
@@ -1797,7 +1797,7 @@ void zaddGenericCommand(client *c, int flags) {
 
     /* After the options, we expect to have an even number of args, since
      * we expect any number of score-element pairs. */
-    elements = c->argc-scoreidx;
+    elements = c->argc-scoreidx; // scoreidx 之后都是键值对
     if (elements % 2 || !elements) {
         addReplyErrorObject(c,shared.syntaxerr);
         return;
@@ -1810,7 +1810,7 @@ void zaddGenericCommand(client *c, int flags) {
             "XX and NX options at the same time are not compatible");
         return;
     }
-    
+
     if ((gt && nx) || (lt && nx) || (gt && lt)) {
         addReplyError(c,
             "GT, LT, and/or NX options at the same time are not compatible");
@@ -1910,7 +1910,7 @@ void zremCommand(client *c) {
 
     if (deleted) {
         notifyKeyspaceEvent(NOTIFY_ZSET,"zrem",key,c->db->id);
-        if (keyremoved) {            
+        if (keyremoved) {
             notifyKeyspaceEvent(NOTIFY_GENERIC, "del", key, c->db->id);
             /* No need updateKeysizesHist(). dbDelete() done it already. */
         } else {
@@ -3250,7 +3250,7 @@ void zrevrangeCommand(client *c) {
 
 /* This command implements ZRANGEBYSCORE, ZREVRANGEBYSCORE. */
 void genericZrangebyscoreCommand(zrange_result_handler *handler,
-    zrangespec *range, robj *zobj, long offset, long limit, 
+    zrangespec *range, robj *zobj, long offset, long limit,
     int reverse) {
     unsigned long rangelen = 0;
 

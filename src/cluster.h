@@ -40,6 +40,11 @@ struct clusterState;
  * However, if the key contains the {...} pattern, only the part between
  * { and } is hashed. This may be useful in the future to force certain
  * keys to be in the same node (assuming no resharding is in progress). */
+/*
+ * SET {user:1000}:name "Alice"   # 根据"user:1000"计算槽位
+ * SET {group1}:item1:{other} "value"  # 根据"group1"计算槽位
+ * SET key{}:item1 "value"  # 根据完整键"key{}:item1"计算槽位
+ */
 static inline unsigned int keyHashSlot(char *key, int keylen) {
     int s, e; /* start-end indexes of { and } */
 

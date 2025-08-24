@@ -87,10 +87,15 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/deps/hdr_histogram)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/deps/fpconv)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/deps/fast_float)
 
+
+
 # 添加子目录
 add_subdirectory(deps)
 add_subdirectory(src)
 add_subdirectory(example)
+
+
+
 
 # 安装规则
 install(TARGETS redis-server redis-cli redis-benchmark
