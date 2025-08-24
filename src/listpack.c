@@ -117,7 +117,7 @@
  * that this element is valid, so it can be freely used.
  * Generally functions such lpNext and lpDelete assume the input pointer is
  * already validated (since it's the return value of another function).
- * 用于验证指针p是否在listpack的有效范围内
+ * 用于验证指针p是否在 listpack 的有效范围内
  * 大于等于listpack起始位置加上头部大小(确保不在头部内)
  * 小于listpack起始位置加上总字节数(确保不超过listpack边界)
  */
@@ -472,7 +472,14 @@ static inline void lpEncodeString(unsigned char *buf, unsigned char *s, uint32_t
  * Note that this method may access additional bytes (in case of 12 and 32 bit
  * str), so should only be called when we know 'p' was already validated by
  * lpCurrentEncodedSizeBytes or ASSERT_INTEGRITY_LEN (possibly since 'p' is
- * a return value of another function that validated its return. */
+ * a return value of another function that validated its return.
+ *
+ * 用于计算 listpack 中指定元素（由 p 指向）的总编码长度，
+ * 包括编码标识字节、长度字节以及元素数据本身的字节数。如果元素的编码格式无效，则返回 0
+ *
+ * 函数名中的 Unsafe 表示它假设输入的 p 已经过有效性验证（如通过 lpCurrentEncodedSizeBytes 或断言校验）。
+ * 因为对于 12 位和 32 位字符串编码，函数需要访问 p 指向的后续字节来计算长度，若 p 无效可能导致越界访问。
+ */
 static inline uint32_t lpCurrentEncodedSizeUnsafe(unsigned char *p) {
     if (LP_ENCODING_IS_7BIT_UINT(p[0])) return 1;
     if (LP_ENCODING_IS_6BIT_STR(p[0])) return 1+LP_ENCODING_6BIT_STR_LEN(p);
@@ -481,17 +488,23 @@ static inline uint32_t lpCurrentEncodedSizeUnsafe(unsigned char *p) {
     if (LP_ENCODING_IS_24BIT_INT(p[0])) return 4;
     if (LP_ENCODING_IS_32BIT_INT(p[0])) return 5;
     if (LP_ENCODING_IS_64BIT_INT(p[0])) return 9;
+    // 12位字符串：2字节编码 + 字符串长度
     if (LP_ENCODING_IS_12BIT_STR(p[0])) return 2+LP_ENCODING_12BIT_STR_LEN(p);
+    // 32位字符串：5字节编码 + 字符串长度
     if (LP_ENCODING_IS_32BIT_STR(p[0])) return 5+LP_ENCODING_32BIT_STR_LEN(p);
     if (p[0] == LP_EOF) return 1;
+    // 无效编码：返回0
     return 0;
 }
 
 /* Return bytes needed to encode the length of the listpack element pointed by 'p'.
  * This includes just the encoding byte, and the bytes needed to encode the length
  * of the element (excluding the element data itself)
+ * 用于计算 listpack 中某个元素的长度编码部分所需的字节数
+ * （仅包含编码标识和长度信息，不包含元素数据本身）
  * If the element encoding is wrong then 0 is returned. */
 static inline uint32_t lpCurrentEncodedSizeBytes(const unsigned char encoding) {
+    // 7位无符号整数编码：仅需1字节（包含编码标识和数值）
     if (LP_ENCODING_IS_7BIT_UINT(encoding)) return 1;
     if (LP_ENCODING_IS_6BIT_STR(encoding)) return 1;
     if (LP_ENCODING_IS_13BIT_INT(encoding)) return 1;
@@ -499,7 +512,9 @@ static inline uint32_t lpCurrentEncodedSizeBytes(const unsigned char encoding) {
     if (LP_ENCODING_IS_24BIT_INT(encoding)) return 1;
     if (LP_ENCODING_IS_32BIT_INT(encoding)) return 1;
     if (LP_ENCODING_IS_64BIT_INT(encoding)) return 1;
+    // 12位字符串长度编码：需要2字节（1字节标识+1字节长度）
     if (LP_ENCODING_IS_12BIT_STR(encoding)) return 2;
+    // 32位字符串长度编码：需要5字节（1字节标识+4字节长度）
     if (LP_ENCODING_IS_32BIT_STR(encoding)) return 5;
     if (encoding == LP_EOF) return 1;
     return 0;
@@ -1689,8 +1704,11 @@ unsigned char *lpValidateFirst(unsigned char *lp) {
 /* Validate the integrity of a single listpack entry and move to the next one.
  * The input argument 'pp' is a reference to the current record and is advanced on exit.
  *  the data pointed to by 'lp' will not be modified by the function.
+ *  输入参数 'pp' 是对当前记录的引用，在退出时会指向（下一个条目的）起始位置
+ *  'lp' 指向数据不会改变
  * Returns 1 if valid, 0 if invalid. */
 int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
+    // 验证是否超出范围, lpbytes 可能是单个元素,也可能是整个listpack 的字节数
 #define OUT_OF_RANGE(p) ( \
         (p) < lp + LP_HDR_SIZE || \
         (p) > lp + lpbytes - 1)
@@ -1707,7 +1725,10 @@ int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
         return 1;
     }
 
-    /* check that we can read the encoded size */
+    /* check that we can read the encoded size
+     * 所存储的元素的第一个字节可判断数据类型
+     * 获取长度编码部分所需的字节数
+     */
     uint32_t lenbytes = lpCurrentEncodedSizeBytes(p[0]);
     if (!lenbytes)
         return 0;
