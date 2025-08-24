@@ -4,6 +4,8 @@
 #include "../src/listpack.c"
 
 int main(int argc, char *argv[]) {
+    UNUSED(argc);
+    UNUSED(argv);
     printf("Starting listpack internal tests...\n");
     if (listpackTest(argc, argv, 0) == 0) {
         printf("All listpack internal tests passed!\n");
