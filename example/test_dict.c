@@ -269,7 +269,7 @@ void test_dict_delete() {
     dictAdd(d, "key2", "value2");
     dictAdd(d, "key3", "value3");
     assert_equal_int(3, dictSize(d), "Dict should have 3 elements");
-    
+
     // 删除元素
     int result = dictDelete(d, "key2");
     assert_equal_int(DICT_OK, result, "Deleting existing key should succeed");
