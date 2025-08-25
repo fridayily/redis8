@@ -278,7 +278,23 @@ static inline void lpEncodeIntegerGetType(int64_t v, unsigned char *intenc, uint
         if (intenc != NULL) intenc[0] = v;
         if (enclen != NULL) *enclen = 1;
     } else if (v >= -4096 && v <= 4095) {
-        /* 13 bit integer. */
+        /* 13 bit integer.
+         * 1<<13 = 8192
+         * -1 + 8192 = 8191
+         * 对应规则
+         * 4095 -> 4095
+         * 4094 -> 4094
+         * 0 -> 0
+         * -1 -> 8191  8191 为 negmax 2^13 - 1
+         * -2 -> 8190
+         * -4096 -> 4096  4096 为 negstart ,2^12
+         *
+         * 如果解码出来的值为 uval
+         * 原值为 uval - 8191 -1 ,即 uval - negmax - 1
+         *
+         * 即 0-4095 即 0 到 (2^12 -1) 为正数
+         * 即 4096-8191 映射为负数: -4096 到 -1
+         */
         if (v < 0) v = ((int64_t)1<<13)+v;
         if (intenc != NULL) {
             /*
@@ -760,6 +776,10 @@ static inline unsigned char *lpGetWithBuf(unsigned char *p, int64_t *count, unsi
         negmax = 0;
         uval = encoding & 0x7f;
     } else if (LP_ENCODING_IS_13BIT_INT(encoding)) {
+        // encoding & 0x1f：提取 encoding 的低 5 位, 这是 13 位整数的高 5 位。
+        // p[1]：取第二个字节的 8 位，作为 13 位整数的低 8 位
+        // 两者通过 <<8 和 | 拼接，得到一个 13 位的无符号整数 uval
+        // 原值为 uval - 8191 -1 ,即 uval - negmax - 1
         uval = ((encoding&0x1f)<<8) | p[1];
         negstart = (uint64_t)1<<12;
         negmax = 8191;
@@ -802,12 +822,21 @@ static inline unsigned char *lpGetWithBuf(unsigned char *p, int64_t *count, unsi
      * Convert the unsigned value to the signed one using two's complement
      * rule. */
     if (uval >= negstart) {
+        /*
+         * 大于负数的开始值,按负数处理
+         * [0,1,..4095,4096(-4096 negstart),4097(-4095),...8191(-1 negmax)]
+         */
         /* This three steps conversion should avoid undefined behaviors
-         * in the unsigned -> signed conversion. */
+         * in the unsigned -> signed conversion.
+         */
+        // 相对于 negmax 的偏移量(正数)
         uval = negmax-uval;
+        // 将正数偏移量赋值给有符号变量 val
         val = uval;
+        // 将正数偏移量转换为对应的负数
         val = -val-1;
     } else {
+        // 按正数处理
         val = uval;
     }
 
@@ -1053,7 +1082,12 @@ unsigned char *lpInsert(unsigned char *lp, unsigned char *elestr, unsigned char 
 
     /* Store the offset of the element 'p', so that we can obtain its
      * address again after a reallocation.
-     * p 是要操作的元素的地址, lp 是 listpack 的起始地址
+     * lp 是指向整个 listpack 结构起始地址的指针
+     * p 是指向 listpack 中某个特定元素的指针
+     * poff 计算的是 p 指针相对于 lp 指针的偏移量（以字节为单位）
+     *
+     * 这行代码的作用是保存元素 p 在 listpack 中的位置偏移量，因为在后续操作中可能会对 listpack 进行重新分配内存（realloc），
+     * 导致指针地址发生变化。通过保存偏移量，可以在重新分配内存后通过 lp + poff 重新计算出元素的新地址
      */
     unsigned long poff = p-lp;
 
@@ -1066,7 +1100,11 @@ unsigned char *lpInsert(unsigned char *lp, unsigned char *elestr, unsigned char 
         * lpEncodeString() to actually write the encoded string on place later.
         *
         * Whatever the returned encoding is, 'enclen' is populated with the
-        * length of the encoded element. */
+        * length of the encoded element.
+        *
+        * elestr 如果能够转换成 int64 ,则编码后存到 intenc 中,编码长度存到 enclen
+        * 否则就当作字符串,编码长度存到 enclen
+         */
         enctype = lpEncodeGetType(elestr,size,intenc,&enclen);
         if (enctype == LP_ENCODING_INT) eleint = intenc;
     } else if (eleint) {
@@ -1113,10 +1151,19 @@ unsigned char *lpInsert(unsigned char *lp, unsigned char *elestr, unsigned char 
         dst = lp + poff;
     }
 
+    /*
+     * 它将插入点之后的所有数据向后移动，为新元素和其反向长度字段留出空间。
+     */
     /* Setup the listpack relocating the elements to make the exact room
      * we need to store the new one. */
     if (where == LP_BEFORE) {
-        // 将要操作元素位置之后的数据向后移动,空出空间来写数据
+        // 将从 dst 开始的 old_listpack_bytes-poff 字节数据移动到 dst+enclen+backlen_size 位置
+
+        // dst 是要插入位置的指针
+        // enclen 是新元素编码后的长度
+        // backlen_size 是反向长度字段的大小
+        // old_listpack_bytes 是旧 listpack 的总字节数
+        // poff 是插入位置的偏移量
         memmove(dst+enclen+backlen_size,dst,old_listpack_bytes-poff);
     } else { /* LP_REPLACE. */
         memmove(dst+enclen+backlen_size,
@@ -1708,7 +1755,8 @@ unsigned char *lpValidateFirst(unsigned char *lp) {
  *  'lp' 指向数据不会改变
  * Returns 1 if valid, 0 if invalid. */
 int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
-    // 验证是否超出范围, lpbytes 可能是单个元素,也可能是整个listpack 的字节数
+    // lpbytes 总是 lp 的总字节大小
+    // 为什么不用  ASSERT_INTEGRITY ?
 #define OUT_OF_RANGE(p) ( \
         (p) < lp + LP_HDR_SIZE || \
         (p) > lp + lpbytes - 1)
@@ -1738,7 +1786,9 @@ int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
         return 0;
 
     /* get the entry length and encoded backlen. */
+    // 获取数据和其正向编码长度
     unsigned long entrylen = lpCurrentEncodedSizeUnsafe(p);
+    // 获取反向编码长度
     unsigned long encodedBacklen = lpEncodeBacklenBytes(entrylen);
     entrylen += encodedBacklen;
 
@@ -1750,6 +1800,17 @@ int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
     p += entrylen;
 
     /* make sure the encoded length at the end patches the one at the beginning. */
+    /* 用于确保条目末尾的反向长度与条目开头的正向长度一致
+     * p-1 指向的是上一个 entry 的反向编码的最后一个字节,可以获取该 entry 的长度
+     *
+     * prevlen:  前一个 entry 的反向编码长度获取 entry 的真正长度
+     * encodedBacklen: 前一个 entry 反向编码长度
+     * 两个加起来是整个 entry 长度
+     * entry 结构
+     * encoding-type|entry-data|entry-len
+     * prevlen = len(encoding-type|entry-data)
+     * encodedBacklen = len(prevlen)
+     */
     uint64_t prevlen = lpDecodeBacklen(p-1);
     if (prevlen + encodedBacklen != entrylen)
         return 0;
