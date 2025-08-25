@@ -422,6 +422,12 @@ static int dictCheckRehashingCompleted(dict *d) {
     return 1;
 }
 
+
+/*
+ * 每一步重哈希指的是将旧哈希表中的一个桶（bucket） 迁移到新表中。由于哈希表采用链地址法（chaining） 处理冲突，
+ * 一个桶可能包含多个键（通过链表连接），因此一步操作可能迁移多个键。
+ * 函数最多会扫描 N*10 个空桶。这是为了避免在哈希表存在大量空桶时，函数因无意义的扫描而长时间阻塞（保证操作的时间复杂度可控）。
+ */
 /* Performs N steps of incremental rehashing. Returns 1 if there are still
  * keys to move from the old to the new hash table, otherwise 0 is returned.
  *
@@ -1683,6 +1689,11 @@ static void _dictShrinkIfNeeded(dict *d)
     dictShrinkIfNeeded(d);
 }
 
+/*
+ * 两种情况都是迁移整个 bucket
+ * (1) visitedIdx 大于已经rehash过的 rehashidx, 且对应 bucket 有效,则迁移整个 bucket
+ * (2) visitedIdx 小于rehashidx, 或者 bucket 为空,则执行 dictRehash(d,1), 其实就是查找下一个有效的 bucket,迁移整个 bucket
+ */
 static void _dictRehashStepIfNeeded(dict *d, uint64_t visitedIdx) {
     if ((!dictIsRehashing(d)) || (d->pauserehash != 0))
         return;
