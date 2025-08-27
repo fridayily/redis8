@@ -4,6 +4,13 @@ Redis 源码的推荐顺序：
 - [sds.h](/src/sds.h)/[sds.c](/src/sds.c) - 简单动态字符串实现
 - [adlist.h](/src/adlist.h)/[adlist.c](/src/adlist.c) - 链表
 - [dict.h](/src/dict.h)/[dict.c](/src/dict.c) - 哈希表（字典实现）
+- [t_zet.c](/src/t_zset.c) 跳跃表
+- [insert.h](/src/intset.h)/[insert.c](/src/intset.c) 整数集合
+- [ziplist.h](/src/ziplist.h)/[ziplist.c](/src/ziplist.c) 压缩列表
+- [quicklist.h](/src/quicklist.h)/[quicklist.c](/src/quicklist.c) 快速列表
+- [listpack.h](/src/listpack.h)/[listpack.c](/src/listpack.c) 列表包
+- [rax.h](/src/rax.h)/[rax.c](/src/rax.c) 基数树
+- [object.c](/src/object.c) 对象系统
 - [zmalloc.h](/src/zmalloc.h)/[zmalloc.c](/src/zmalloc.c) - 内存分配封装
 
 ## 2. 基础工具

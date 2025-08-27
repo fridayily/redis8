@@ -655,8 +655,25 @@ unsigned long lpLength(unsigned char *lp) {
  * not sensible because of the different requirements of the application using
  * this lib.
  *
+ * 如果调用此函数时遇到及一个编码错误的压缩列表（ziplist），导致无法以有效有效的方式解析它，
+ * 函数的返回结果可能会类似解析出一个值为 12345678900000000 加上 <无法识别的字节> 的整数编码形式，
+ * 这或许能提示我们存在问题。在这种情况下，让程序崩溃并不合理，因为使用该库的应用程序有着不同的需求。
+ *
  * Similarly, there is no error returned since the listpack normally can be
- * assumed to be valid, so that would be a very high API cost. */
+ * assumed to be valid, so that would be a very high API cost.
+ *
+ *
+ * if 'intbuf' is NULL:
+ *  如果 element 本身是 integer, 该函数返回 NULL, 并通过引用（by reference）方式在 count 参数中填充（populates）整数值
+ *  如果 element 本身是 string, ，函数会返回指向该字符串的指针（指向 listpack 内部），同时将 count 设置为字符串的长度
+ *
+ * 如果 intbuf 指向调用者传入的缓冲区（该缓冲区必须至少有 LP_INTBUF_SIZE 字节），
+ * 则此函数始终将元素作为字符串返回（返回字符串指针，并通过引用将 count 参数设置为字符串长度）。
+ * 不过，若元素是以整数形式编码的，则会使用 intbuf 缓冲区来存储其字符串表示形式
+ *
+ * 如果 entry_size 不为 NULL，则会将 p 所指向的 listpack 元素的条目长度赋值给 *entry_size。
+ * 这包括编码字节、长度字节、元素数据本身以及反向长度（backlen）字节
+ */
 static inline unsigned char *lpGetWithSize(unsigned char *p, int64_t *count, unsigned char *intbuf, uint64_t *entry_size) {
     int64_t val;
     uint64_t uval, negstart, negmax;
@@ -900,10 +917,12 @@ static inline unsigned char *lpFindCbInternal(unsigned char *lp, unsigned char *
     uint64_t entry_size = 123456789; /* initialized to avoid warning. */
     uint32_t lp_bytes = lpBytes(lp);
 
+    // 如果起始指针 p 为 NULL，则从第一个元素开始
     if (!p)
         p = lpFirst(lp);
 
     while (p) {
+        //  比较一次不成功后跳过 skipcnt 次数再次比较
         if (skipcnt == 0) {
             value = lpGetWithSize(p, &ll, NULL, &entry_size);
             if (value) {
@@ -938,6 +957,10 @@ static inline unsigned char *lpFindCbInternal(unsigned char *lp, unsigned char *
     return NULL;
 }
 
+
+/*
+ * 实现通过自定义比较逻辑在 listpack 中查找条目的功能，支持跳过指定数量的条目以优化效率。
+ */
 unsigned char *lpFindCb(unsigned char *lp, unsigned char *p,
                         void *user, lpCmp cmp, unsigned int skip)
 {
@@ -989,7 +1012,12 @@ static inline int lpFindCmp(const unsigned char *lp, unsigned char *p,
 }
 
 /* Find pointer to the entry equal to the specified entry. Skip 'skip' entries
- * between every comparison. Returns NULL when the field could not be found. */
+ * between every comparison. Returns NULL when the field could not be found.
+ *
+ * s：待匹配的字符串（或二进制数据）指针。
+ * slen：s 的长度（字节数)
+ * skip：每次比较之间需要跳过的条目数量
+ */
 unsigned char *lpFind(unsigned char *lp, unsigned char *p, unsigned char *s,
                       uint32_t slen, unsigned int skip)
 {
@@ -1203,6 +1231,10 @@ unsigned char *lpInsert(unsigned char *lp, unsigned char *elestr, unsigned char 
     /* Update header. */
     if (where != LP_REPLACE || delete) {
         uint32_t num_elements = lpGetNumElements(lp);
+        /*
+         * 当 listpack 中元素数量超过 65535 时，头部无法存储确切的元素数量
+         * 此时将元素计数设置为 LP_HDR_NUMELE_UNKNOWN，表示数量未知
+         */
         if (num_elements != LP_HDR_NUMELE_UNKNOWN) {
             if (!delete)
                 lpSetNumElements(lp,num_elements+1);
@@ -1466,7 +1498,9 @@ unsigned char *lpDeleteRangeWithEntry(unsigned char *lp, unsigned char **p, unsi
 
     /* Find the next entry to the last entry that needs to be deleted.
      * lpLength may be unreliable due to corrupt data, so we cannot
-     * treat 'num' as the number of elements to be deleted. */
+     * treat 'num' as the number of elements to be deleted.
+     * 根据 num 数量移动尾指针
+     */
     while (num--) {
         deleted++;
         tail = lpSkip(tail);
@@ -1478,8 +1512,15 @@ unsigned char *lpDeleteRangeWithEntry(unsigned char *lp, unsigned char **p, unsi
      * address again after a reallocation. */
     unsigned long poff = first-lp;
 
-    /* Move tail to the front of the listpack */
+    /* Move tail to the front of the listpack
+     * first 到 tail 之间的数据是要删除的
+     */
     memmove(first, tail, eofptr - tail + 1);
+    /* 总字节数-删除字节数
+     * 设置 total bytes 后, 范围外的数据不可访问
+     * 但如果内存没有缩减,这部分数据不会改变
+     * 缩减后会释放内存
+     */
     lpSetTotalBytes(lp, bytes - (tail - first));
     uint32_t numele = lpGetNumElements(lp);
     if (numele != LP_HDR_NUMELE_UNKNOWN)
@@ -1503,18 +1544,23 @@ unsigned char *lpDeleteRange(unsigned char *lp, long index, unsigned long num) {
 
     /* If we know we're gonna delete beyond the end of the listpack, we can just move
      * the EOF marker, and there's no need to iterate through the entries,
+     * 当我们知道要删除的元素超出了 listpack 的末尾时，可以直接移动 EOF 标记来截断 listpack，而不需要逐个遍历和删除元素
      * but if we can't be sure how many entries there are, we rather avoid calling lpLength
      * since that means an additional iteration on all elements.
+     * 当不确定 listpack 中的条目数量时，避免调用 lpLength 是为了减少不必要的全量遍历
      *
      * Note that index could overflow, but we use the value after seek, so when we
      * use it no overflow happens. */
+    // 处理负索引
     if (numele != LP_HDR_NUMELE_UNKNOWN && index < 0) index = (long)numele + index;
+    // 如果可以删除的 entry 数量 <= num, 则直接移动 EOF 标记
     if (numele != LP_HDR_NUMELE_UNKNOWN && (numele - (unsigned long)index) <= num) {
         p[0] = LP_EOF;
         lpSetTotalBytes(lp, p - lp + 1);
         lpSetNumElements(lp, index);
         lp = lpShrinkToFit(lp);
     } else {
+        // 按需删除
         lp = lpDeleteRangeWithEntry(lp, &p, num);
     }
 
@@ -1529,6 +1575,10 @@ unsigned char *lpBatchDelete(unsigned char *lp, unsigned char **ps, unsigned lon
     unsigned char *dst = ps[0];
     size_t total_bytes = lpGetTotalBytes(lp);
     unsigned char *lp_end = lp + total_bytes; /* After the EOF element. */
+    /*
+     * lp_end[-1] 等价于 *(lp_end - 1)
+     * 由于 lp_end 指向 EOF 标记之后的位置，所以 lp_end - 1 指向 EOF 标记本身
+     */
     assert(lp_end[-1] == LP_EOF);
     /*
      * ----+--------+-----------+--------+---------+-----+---+
@@ -1541,6 +1591,20 @@ unsigned char *lpBatchDelete(unsigned char *lp, unsigned char **ps, unsigned lon
      *     skip     keep_start  keep_end                     lp_end
      *
      * The loop memmoves the bytes between keep_start and keep_end to dst.
+     *
+     * 假设有 listpack [0,1,2,3,4,5,6] 要删除 1,2,3,5
+     * 第一轮
+     *  i=0 dst=1,skip=1,keep_start=2,keep_end=2
+     *  i=1 dst=1,skip=2,keep_start=3,keep_end=3
+     *  i=2 dst=1,skip=3,keep_start=4,keep_end=5
+     *  keep_start!=keep_end, bytes_to_keep=1
+     *  memmove(dst, keep_start, bytes_to_keep);
+     *  将 keep_start 之后的 bytes_to_keep(1) 数据移动到 dst
+     *  得到 [0,4,2,3,4,5,6]  dst=2
+     * 第二轮
+     *  i=3 dst=2,skip=5,keep_start=6,keep_end=lpend
+     *  得到 [0,4,6,3,4,5,6]  dst=3
+     * 更新数据得到 [0,4,6]
      */
     for (unsigned long i = 0; i < count; i++) {
         unsigned char *skip = ps[i];
@@ -1549,6 +1613,9 @@ unsigned char *lpBatchDelete(unsigned char *lp, unsigned char **ps, unsigned lon
         unsigned char *keep_end;
         if (i + 1 < count) {
             keep_end = ps[i + 1];
+
+            printf("i=%lu \n",i, keep_start);
+
             /* Deleting consecutive elements. Nothing to keep between them. */
             if (keep_start == keep_end) continue;
         } else {
@@ -1561,6 +1628,11 @@ unsigned char *lpBatchDelete(unsigned char *lp, unsigned char **ps, unsigned lon
         dst += bytes_to_keep;
     }
     /* Update total size and num elements. */
+    /*
+     * lpend 指向的是 EOL
+     * dst 指向第1个无效的数据
+     * 之间就是删除的字节数
+     */
     size_t deleted_bytes = lp_end - dst;
     total_bytes -= deleted_bytes;
     assert(lp[total_bytes - 1] == LP_EOF);
@@ -1667,6 +1739,7 @@ unsigned char *lpMerge(unsigned char **first, unsigned char **second) {
     return target;
 }
 
+// 复制 lp
 unsigned char *lpDup(unsigned char *lp) {
     size_t lpbytes = lpBytes(lp);
     unsigned char *newlp = lp_malloc(lpbytes);
@@ -1751,6 +1824,8 @@ unsigned char *lpValidateFirst(unsigned char *lp) {
 /* Validate the integrity of a single listpack entry and move to the next one.
  * The input argument 'pp' is a reference to the current record and is advanced on exit.
  *  the data pointed to by 'lp' will not be modified by the function.
+ *  用于验证 listpack 中当前元素的完整性，并将指针移动到下一个元素
+ *
  *  输入参数 'pp' 是对当前记录的引用，在退出时会指向（下一个条目的）起始位置
  *  'lp' 指向数据不会改变
  * Returns 1 if valid, 0 if invalid. */
@@ -1959,7 +2034,9 @@ void lpRandomEntries(unsigned char *lp, unsigned int count, listpackEntry *entri
     unsigned char *p = lpFirst(lp);
     unsigned int j = 0; /* index in listpack */
     for (unsigned int i = 0; i < count; i++) {
-        /* Advance listpack pointer to until we reach 'index' listpack. */
+        /* Advance listpack pointer to until we reach 'index' listpack.
+         * 如果 index 有重复,即连续相同的 index, 则会跳过这个for 循环
+         */
         while (j < picks[i].index) {
             p = lpNext(lp, p);
             j++;
@@ -2015,6 +2092,8 @@ void lpRandomPairs(unsigned char *lp, unsigned int count, listpackEntry *keys, l
         key = lpGetValue(p, &klen, &klval);
         assert((p = lpNext(lp, p)));
         value = lpGetValue(p, &vlen, &vlval);
+        // pickindex 就是 picks 中的索引
+        // 这个 while 循环就是处理 index 重复的情况,不用重新取 key 和 value,而是复用第一次取得的
         while (pickindex < count && lpindex == picks[pickindex].index) {
             int storeorder = picks[pickindex].order;
             lpSaveValue(key, klen, klval, &keys[storeorder]);
@@ -2056,7 +2135,10 @@ unsigned int lpRandomPairsUnique(unsigned char *lp, unsigned int count,
 
     p = lpFirst(lp);
     unsigned int picked = 0, remaining = count;
+    // remaining 剩余要取的元素数
     while (picked < count && p) {
+        // 调用 lpNextRandom 后 index 的值会改变
+        // 且这里是以 tuple_len 为单位抽样
         assert((p = lpNextRandom(lp, p, &index, remaining, tuple_len)));
         key = lpGetValue(p, &klen, &klval);
         lpSaveValue(key, klen, klval, &keys[picked]);
@@ -2066,6 +2148,7 @@ unsigned int lpRandomPairsUnique(unsigned char *lp, unsigned int count,
             key = lpGetValue(p, &klen, &klval);
             lpSaveValue(key, klen, klval, &vals[picked]);
         }
+        // lpNextRandom 是以 tuple_len 为单位抽样,所以这里不必跳过 tuple_len 个元素
         p = lpNext(lp, p);
         remaining--;
         picked++;
@@ -2098,6 +2181,8 @@ unsigned int lpRandomPairsUnique(unsigned char *lp, unsigned int count,
  *         p = lpNext(lp, p);
  *         i++;
  *     }
+ *  从当前元素 p（包含）开始，向前迭代 listpack，从剩余未遍历的元素中随机挑选一个符合条件的元素（基于 tuple_len），
+ *  确保每个元素被选中的概率均等，且只需一次遍历
  */
 unsigned char *lpNextRandom(unsigned char *lp, unsigned char *p, unsigned int *index,
                             unsigned int remaining, int tuple_len)
@@ -2110,6 +2195,7 @@ unsigned char *lpNextRandom(unsigned char *lp, unsigned char *p, unsigned int *i
     unsigned int i = *index;
     unsigned int total_size = lpLength(lp);
     while (i < total_size && p != NULL) {
+        // 通过 i % tuple_len == 0 筛选出属于 “逻辑条目起始位置” 的元素
         if (i % tuple_len != 0) {
             p = lpNext(lp, p);
             i++;
@@ -2117,14 +2203,17 @@ unsigned char *lpNextRandom(unsigned char *lp, unsigned char *p, unsigned int *i
         }
 
         /* Do we pick this element? */
+        // 剩余未遍历的符合条件的元素总数
         unsigned int available = (total_size - i) / tuple_len;
         double randomDouble = ((double)rand()) / RAND_MAX;
+        // 选择概率 = 剩余需要选择的数量 / 剩余可选数量
         double threshold = ((double)remaining) / available;
         if (randomDouble <= threshold) {
             *index = i;
             return p;
         }
 
+        // 继续下一次抽样
         p = lpNext(lp, p);
         i++;
     }
@@ -2223,6 +2312,13 @@ static long long usec(void) {
     return (((long long)tv.tv_sec)*1000000)+tv.tv_usec;
 }
 
+
+/*
+ * pos =0 ,添加到头部, =1 添加到尾部
+ * maxsize: 测试的最大 listpack 大小
+ * dnum: 每次测试递增的大小步长
+ * 渐进式测试：从不同大小开始测试，观察性能随大小的变化
+ */
 static void stress(int pos, int num, int maxsize, int dnum) {
     int i, j, k;
     unsigned char *lp;
@@ -2236,6 +2332,7 @@ static void stress(int pos, int num, int maxsize, int dnum) {
 
         /* Do num times a push+pop from pos */
         start = usec();
+        // 执行 num 次 push+pop 操作：
         for (k = 0; k < num; k++) {
             if (pos == 0) {
                 lp = lpPrepend(lp, (unsigned char*)"quux", 4);
@@ -2278,14 +2375,17 @@ static int randstring(char *target, unsigned int min, unsigned int max) {
     int minval, maxval;
     switch(rand() % 3) {
     case 0:
+        // 所有可能的字节值，包括不可打印字符
         minval = 0;
         maxval = 255;
     break;
+        // 包含数字、大写字母、小写字母及部分符号，如 0-9、A-Z、a-z
     case 1:
         minval = 48;
         maxval = 122;
     break;
     case 2:
+        // 仅包含数字 0-4
         minval = 48;
         maxval = 52;
     break;
@@ -2317,10 +2417,13 @@ static int lpFindCbCmp(const unsigned char *lp, unsigned char *p, void *user, un
     assert(lp);
     assert(p);
 
+    // user: 用户提供的数据（在这里是待查找的字符串）
     char *n = user;
 
     if (!s) {
+        // 当 s 为 NULL 时，表示当前 listpack 元素是整数编码：
         int64_t sval;
+        // 尝试将待查找的字符串 n 转换为整数 sval
         if (lpStringToInt64((const char*)n, strlen(n), &sval))
             return slen == sval ? 0 : 1;
     } else {
@@ -3240,15 +3343,17 @@ int listpackTest(int argc, char *argv[], int flags) {
 
     TEST("Test number of elements exceeds LP_HDR_NUMELE_UNKNOWN") {
         lp = lpNew(0);
+        // 这里写了 LP_HDR_NUMELE_UNKNOWN + 1 个元素
         for (int i = 0; i < LP_HDR_NUMELE_UNKNOWN + 1; i++)
             lp = lpAppend(lp, (unsigned char*)"1", 1);
-
+        // 插入 LP_HDR_NUMELE_UNKNOWN 个元素
         assert(lpGetNumElements(lp) == LP_HDR_NUMELE_UNKNOWN);
         assert(lpLength(lp) == LP_HDR_NUMELE_UNKNOWN+1);
 
         lp = lpDeleteRange(lp, -2, 2);
         assert(lpGetNumElements(lp) == LP_HDR_NUMELE_UNKNOWN);
         assert(lpLength(lp) == LP_HDR_NUMELE_UNKNOWN-1);
+        // 元素少于 LP_HDR_NUMELE_UNKNOWN, 调用 lpLength 更新元素数量
         assert(lpGetNumElements(lp) == LP_HDR_NUMELE_UNKNOWN-1); /* update length after lpLength */
         lpFree(lp);
     }
