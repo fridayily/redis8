@@ -102,8 +102,17 @@ typedef struct quicklistBookmark {
  * 'compress' is: 0 if compression disabled, otherwise it's the number
  *                of quicklistNodes to leave uncompressed at ends of quicklist.
  * 'fill' is the user-requested (or default) fill factor.
+ *      正数表示每个节点的最大元素数量
+ *      负数表示使用预定义的大小级别
  * 'bookmarks are an optional feature that is used by realloc this struct,
- *      so that they don't consume memory when not used. */
+ *      so that they don't consume memory when not used.
+ *  fill 2字节
+ *  compress 2字节
+ *  compress 1字节
+ *  对齐后占用 8字节
+ *  bookmarks[] 柔性数组,不占用结构体本身大小
+ *  所以整个结构体 40 字节
+ */
 typedef struct quicklist {
     quicklistNode *head;
     quicklistNode *tail;

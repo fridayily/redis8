@@ -162,7 +162,10 @@ void quicklistSetOptions(quicklist *quicklist, int fill, int compress) {
     quicklistSetCompressDepth(quicklist, compress);
 }
 
-/* Create a new quicklist with some default parameters. */
+/* Create a new quicklist with some default parameters.
+ * fill：控制每个节点可以存储多少数据
+ * compress：控制压缩深度，0 表示不压缩
+ */
 quicklist *quicklistNew(int fill, int compress) {
     quicklist *quicklist = quicklistCreate();
     quicklistSetOptions(quicklist, fill, compress);
@@ -196,9 +199,12 @@ void quicklistRelease(quicklist *quicklist) {
     while (len--) {
         next = current->next;
 
+        // 释放一个 listpack
         zfree(current->entry);
+        // 减去一个 listpack 的 entry 数
         quicklist->count -= current->count;
 
+        // 释放 listpack 节点
         zfree(current);
 
         quicklist->len--;
@@ -228,7 +234,10 @@ REDIS_STATIC int __quicklistCompressNode(quicklistNode *node) {
 
     quicklistLZF *lzf = zmalloc(sizeof(*lzf) + node->sz);
 
-    /* Cancel if compression fails or doesn't compress small enough */
+    /* Cancel if compression fails or doesn't compress small enough
+     * 将压缩数据放到 lzf.compressed
+     * 压缩后到大小为 lzf->sz
+     */
     if (((lzf->sz = lzf_compress(node->entry, node->sz, lzf->compressed,
                                  node->sz)) == 0) ||
         lzf->sz + MIN_COMPRESS_IMPROVE >= node->sz) {
@@ -312,7 +321,9 @@ REDIS_STATIC void __quicklistCompress(const quicklist *quicklist,
     assert(quicklist->head->recompress == 0 && quicklist->tail->recompress == 0);
 
     /* If length is less than our compress depth (from both sides),
-     * we can't compress anything. */
+     * we can't compress anything.
+     * 如果不允许压缩或列表长度小于压缩深度的两倍，则不进行压缩
+     */
     if (!quicklistAllowsCompression(quicklist) ||
         quicklist->len < (unsigned int)(quicklist->compress * 2))
         return;
@@ -357,11 +368,21 @@ REDIS_STATIC void __quicklistCompress(const quicklist *quicklist,
         quicklistDecompressNode(forward);
         quicklistDecompressNode(reverse);
 
+        /*
+         * while 循环最多遍历 quicklist->compress 次
+         * 所以满足改条件说明在压缩深度内,则不会压缩该节点
+         */
         if (forward == node || reverse == node)
             in_depth = 1;
 
         /* We passed into compress depth of opposite side of the quicklist
-         * so there's no need to compress anything and we can exit. */
+         * so there's no need to compress anything and we can exit.
+         * 当从头部开始向后遍历的指针 forward 与从尾部开始向前遍历的指针 reverse 指向同一个节点时
+         * 意味着整个 quicklist 的节点已经处理完毕
+         *
+         * 当 forward 节点的下一个节点就是 reverse 节点时, 这意味着两个遍历指针已经相遇，
+         * 中间没有其他节点需要处理
+         */
         if (forward == reverse || forward->next == reverse)
             return;
 
@@ -409,8 +430,12 @@ REDIS_STATIC void __quicklistInsertNode(quicklist *quicklist,
                                         quicklistNode *old_node,
                                         quicklistNode *new_node, int after) {
     if (after) {
+        /*
+         * 插入到 old_node 后面, 所以 new_node 的前面是 old_node
+         */
         new_node->prev = old_node;
         if (old_node) {
+            // 如果 old_node 非空, 将 new_node 插入到 old_noe 后面
             new_node->next = old_node->next;
             if (old_node->next)
                 old_node->next->prev = new_node;
@@ -458,10 +483,14 @@ REDIS_STATIC void _quicklistInsertNodeAfter(quicklist *quicklist,
 
 #define sizeMeetsSafetyLimit(sz) ((sz) <= SIZE_SAFETY_LIMIT)
 
-/* Calculate the size limit of the quicklist node based on negative 'fill'. */
+/* Calculate the size limit of the quicklist node based on negative 'fill'.
+ * 负数表示使用预定义的大小级别
+ */
 static size_t quicklistNodeNegFillLimit(int fill) {
     assert(fill < 0);
+    // 计算出索引
     size_t offset = (-fill) - 1;
+    // 计算 optimization_level 数组的元素个数。方便后期的扩展
     size_t max_level = sizeof(optimization_level) / sizeof(*optimization_level);
     if (offset >= max_level) offset = max_level - 1;
     return optimization_level[offset];
@@ -484,12 +513,13 @@ void quicklistNodeLimit(int fill, size_t *size, unsigned int *count) {
 /* Check if the limit of the quicklist node has been reached to determine if
  * insertions, merges or other operations that would increase the size of
  * the node can be performed.
+ * 用于检查 quicklist 节点是否超过了预设的大小限制，以决定是否可以执行插入、合并等可能增加节点大小的操作
  * Return 1 if exceeds the limit, otherwise 0. */
 int quicklistNodeExceedsLimit(int fill, size_t new_sz, unsigned int new_count) {
     size_t sz_limit;
     unsigned int count_limit;
     quicklistNodeLimit(fill, &sz_limit, &count_limit);
-
+    // quicklistNodeLimit 中将 sz_limit 初始化为 SIZE_MAX
     if (likely(sz_limit != SIZE_MAX)) {
         return new_sz > sz_limit;
     } else if (count_limit != UINT_MAX) {
@@ -617,9 +647,12 @@ int quicklistPushTail(quicklist *quicklist, void *value, size_t sz) {
 
     if (likely(
             _quicklistNodeAllowInsert(quicklist->tail, quicklist->fill, sz))) {
+        // 允许插入, 则添加数据到 quicklist 尾部节点的 listpack 尾部
         quicklist->tail->entry = lpAppend(quicklist->tail->entry, value, sz);
+        // 更新尾部节点大小
         quicklistNodeUpdateSz(quicklist->tail);
     } else {
+        // 不允许插入尾部节点,则新建一个 quicklist 节点,作为新的尾部节点
         quicklistNode *node = quicklistCreateNode();
         node->entry = lpAppend(lpNew(0), value, sz);
 
@@ -1722,7 +1755,10 @@ void quicklistRepr(unsigned char *ql, int full) {
  * Returns 0 on failure (reached the maximum supported number of bookmarks).
  * NOTE: use short simple names, so that string compare on find is quick.
  * NOTE: bookmark creation may re-allocate the quicklist, so the input pointer
-         may change and it's the caller responsibility to update the reference.
+ *        may change and it's the caller responsibility to update the reference.
+ *  在 quicklist 结构体后面分配空间存储 quicklistBookmark 数组
+ *  quicklistBookmark 有两个元素,一个是 quicklistNode 指针,一个是 bookmark 的名称
+ *  注意 quicklistBookmark 是柔性数组
  */
 int quicklistBookmarkCreate(quicklist **ql_ref, const char *name, quicklistNode *node) {
     quicklist *ql = *ql_ref;
@@ -1822,7 +1858,7 @@ void quicklistBookmarksClear(quicklist *ql) {
 #define TEST(name) printf("test — %s\n", name);
 #define TEST_DESC(name, ...) printf("test — " name "\n", __VA_ARGS__);
 
-#define QL_TEST_VERBOSE 0
+#define QL_TEST_VERBOSE 1
 
 #define UNUSED(x) (void)(x)
 static void ql_info(quicklist *ql) {
@@ -1926,7 +1962,12 @@ static int _ql_verify_compress(quicklist *ql) {
     return errors;
 }
 
-/* Verify list metadata matches physical list contents. */
+/* Verify list metadata matches physical list contents.
+ * len quicklist 的长度
+ * count quicklist 中所有 listpack 所有 entry 的个数
+ * head_count  quicklist 头节点的 entry 的个数
+ * tail_count  quicklist 尾节点的 entry 的个数
+ */
 static int _ql_verify(quicklist *ql, uint32_t len, uint32_t count,
                       uint32_t head_count, uint32_t tail_count) {
     int errors = 0;
