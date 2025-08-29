@@ -1614,8 +1614,6 @@ unsigned char *lpBatchDelete(unsigned char *lp, unsigned char **ps, unsigned lon
         if (i + 1 < count) {
             keep_end = ps[i + 1];
 
-            printf("i=%lu \n",i, keep_start);
-
             /* Deleting consecutive elements. Nothing to keep between them. */
             if (keep_start == keep_end) continue;
         } else {

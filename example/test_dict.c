@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include "dict.h"
+#include "../src/dict.h"
 #include "monotonic.h"
 
 // 添加 _serverAssert 函数定义

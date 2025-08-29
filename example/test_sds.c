@@ -20,7 +20,7 @@ void _serverAssert(const char *filename, int linenum, const char *condition) {
     abort();
 }
 
-#include "sds.h"
+#include "../src/sds.h"
 // #include "test_help.h"
 
 

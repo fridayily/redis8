@@ -11,6 +11,7 @@ include_directories(${REDIS_SRC}/deps/hdr_histogram)
 include_directories(${REDIS_SRC}/deps/fpconv)
 include_directories(${REDIS_SRC}/deps/fast_float)
 
+
 # 定义所需的源文件
 set(REDIS_SDS_SOURCES
         ${REDIS_SRC}/src/sds.c
@@ -85,6 +86,7 @@ set(TEST_INTERNAL_SOURCES
 # 创建测试可执行文件，将源文件直接包含在内
 add_executable(test_adlist test_adlist.c ${REDIS_LIST_SOURCES})
 add_executable(test_sds test_sds.c ${REDIS_SDS_SOURCES})
+
 add_executable(test_dict test_dict.c ${REDIS_DICT_SOURCES})
 add_executable(test_listpack test_listpack.c ${TEST_LISTPACK_SOURCES})
 add_executable(test_internal test_internal.c ${TEST_INTERNAL_SOURCES})
