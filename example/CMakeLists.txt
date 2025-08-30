@@ -65,6 +65,23 @@ set(TEST_LISTPACK_SOURCES
         ${REDIS_SRC}/deps/fast_float/fast_float_strtod.cpp
 )
 
+set(TEST_QUICKLIST_SOURCES
+        ${REDIS_SRC}/src/quicklist.c
+        ${REDIS_SRC}/src/listpack.c
+        ${REDIS_SRC}/src/zmalloc.c
+        ${REDIS_SRC}/src/util.c
+        ${REDIS_SRC}/src/lzf_c.c
+        ${REDIS_SRC}/src/lzf_d.c
+        ${REDIS_SRC}/src/sds.c
+        ${REDIS_SRC}/src/sha256.c
+        ${REDIS_SRC}/deps/fpconv/fpconv_dtoa.c
+        ${REDIS_SRC}/deps/fast_float/fast_float_strtod.cpp
+
+)
+
+add_executable(test_quicklist test_quicklist.c ${TEST_QUICKLIST_SOURCES})
+
+
 set(TEST_INTERNAL_SOURCES
         ${REDIS_SRC}/src/adlist.c
         ${REDIS_SRC}/src/listpack.c
@@ -82,6 +99,8 @@ set(TEST_INTERNAL_SOURCES
         ${REDIS_SRC}/src/redisassert.c
 )
 
+
+
 #add_definitions(-DQL_TEST_VERBOSE=1)
 # 创建测试可执行文件，将源文件直接包含在内
 add_executable(test_adlist test_adlist.c ${REDIS_LIST_SOURCES})
@@ -90,8 +109,6 @@ add_executable(test_sds test_sds.c ${REDIS_SDS_SOURCES})
 add_executable(test_dict test_dict.c ${REDIS_DICT_SOURCES})
 add_executable(test_listpack test_listpack.c ${TEST_LISTPACK_SOURCES})
 add_executable(test_internal test_internal.c ${TEST_INTERNAL_SOURCES})
-#target_compile_options(test_internal PRIVATE -DQL_TEST_VERBOSE=1)
-
 add_executable(test_t_zset test_t_zset.c)  # 添加 zset 测试目标
 
 

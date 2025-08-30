@@ -89,7 +89,9 @@ static void _intsetSet(intset *is, int pos, int64_t value) {
         ((int32_t*)is->contents)[pos] = value;
         memrev32ifbe(((int32_t*)is->contents)+pos);
     } else {
+        // 将 value 存储到 contents 数组的 pos 位置（会自动截断为 16 位）
         ((int16_t*)is->contents)[pos] = value;
+        // 对存储在 contents[pos] 的值进行字节序转换（如果主机是大端序）
         memrev16ifbe(((int16_t*)is->contents)+pos);
     }
 }
@@ -160,6 +162,7 @@ static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
     uint8_t curenc = intrev32ifbe(is->encoding);
     uint8_t newenc = _intsetValueEncoding(value);
     int length = intrev32ifbe(is->length);
+    // 这里是升级操作, value 小于0 插入到头部, 大于 0 插入到尾部
     int prepend = value < 0 ? 1 : 0;
 
     /* First set new encoding and resize */
@@ -168,7 +171,10 @@ static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
 
     /* Upgrade back-to-front so we don't overwrite values.
      * Note that the "prepend" variable is used to make sure we have an empty
-     * space at either the beginning or the end of the intset. */
+     * space at either the beginning or the end of the intset.
+     * 如果是负数,prepend =1,向前插入值, set 里面所有值向后移动
+     * intsetResize 扩容保证移动元素是安全的
+     */
     while(length--)
         _intsetSet(is,length+prepend,_intsetGetEncoded(is,length,curenc));
 
@@ -183,6 +189,7 @@ static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
 
 static void intsetMoveTail(intset *is, uint32_t from, uint32_t to) {
     void *src, *dst;
+    // length 是元素个数, from 是索引, 这里计算的是要移动的个数, 而不是字节数
     uint32_t bytes = intrev32ifbe(is->length)-from;
     uint32_t encoding = intrev32ifbe(is->encoding);
 
@@ -199,6 +206,7 @@ static void intsetMoveTail(intset *is, uint32_t from, uint32_t to) {
         dst = (int16_t*)is->contents+to;
         bytes *= sizeof(int16_t);
     }
+    // 通过上面的计算, bytes 是字节数
     memmove(dst,src,bytes);
 }
 
@@ -217,13 +225,17 @@ intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
     } else {
         /* Abort if the value is already present in the set.
          * This call will populate "pos" with the right position to insert
-         * the value when it cannot be found. */
+         * the value when it cannot be found.
+         * 找到了对应的值返回1, success 设置为0
+         * 没有找到 pos 被设置为应被插入位置的索引
+         */
         if (intsetSearch(is,value,&pos)) {
             if (success) *success = 0;
             return is;
         }
 
         is = intsetResize(is,intrev32ifbe(is->length)+1);
+        // 如果新元素不是插入到 intset 的末尾，则需要将插入点及其之后的所有元素向后移动一位，为新元素让出位置
         if (pos < intrev32ifbe(is->length)) intsetMoveTail(is,pos,pos+1);
     }
 
@@ -320,6 +332,7 @@ int intsetValidateIntegrity(const unsigned char *p, size_t size, int deep) {
 
     /* check that the size matches (all records are inside the buffer). */
     uint32_t count = intrev32ifbe(is->length);
+    // 合法的 intset 必须满足这个条件
     if (sizeof(*is) + count*record_size != size)
         return 0;
 

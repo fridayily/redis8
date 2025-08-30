@@ -24,7 +24,11 @@ uint32_t intrev32(uint32_t v);
 uint64_t intrev64(uint64_t v);
 
 /* variants of the function doing the actual conversion only if the target
- * host is big endian */
+ * host is big endian
+ * 这段代码定义了一组条件编译的宏，用于在不同字节序（endianness）的系统上处理数据的字节序转换。
+ * 它的核心思想是：只在大端（Big Endian）系统上执行字节序转换，
+ * 在小端（Little Endian）系统上则不执行任何操作（或直接返回原值）。
+ */
 #if (BYTE_ORDER == LITTLE_ENDIAN)
 #define memrev16ifbe(p) ((void)(0))
 #define memrev32ifbe(p) ((void)(0))

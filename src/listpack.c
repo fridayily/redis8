@@ -1172,7 +1172,9 @@ unsigned char *lpInsert(unsigned char *lp, unsigned char *elestr, unsigned char 
 
     unsigned char *dst = lp + poff; /* May be updated after reallocation. */
 
-    /* Realloc before: we need more room. */
+    /* Realloc before: we need more room.
+     * 假如插入元素后的大小大于已分配的大小,重新分配内存
+     */
     if (new_listpack_bytes > old_listpack_bytes &&
         new_listpack_bytes > lp_malloc_size(lp)) {
         if ((lp = lp_realloc(lp,new_listpack_bytes)) == NULL) return NULL;
@@ -1481,7 +1483,11 @@ unsigned char *lpReplaceInteger(unsigned char *lp, unsigned char **p, long long 
 /* Remove the element pointed by 'p', and return the resulting listpack.
  * If 'newp' is not NULL, the next element pointer (to the right of the
  * deleted one) is returned by reference. If the deleted element was the
- * last one, '*newp' is set to NULL. */
+ * last one, '*newp' is set to NULL.
+ * 删除 p 指向的元素, 返回新的 listpack 地址
+ * 如果 newp 非空, 则被删除元素的下一个元素的指针以引用形式返回
+ * 下一个元素若为空,  '*newp' 被设置为空
+ */
 unsigned char *lpDelete(unsigned char *lp, unsigned char *p, unsigned char **newp) {
     return lpInsert(lp,NULL,NULL,0,p,LP_REPLACE,newp);
 }
