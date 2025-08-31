@@ -17,7 +17,9 @@
  * the strings "foo", "foobar" and "footer" after the insertion of each
  * word. When the node represents a key inside the radix tree, we write it
  * between [], otherwise it is written between ().
- *
+ * "vanilla" 是一个常用的英文俚语，意思是“香草味的”、“标准的”、“未修改的”或“普通的”
+ * 用 () 表示内部节点（不存储最终值的节点）
+ * 用 [] 表示键节点（存储了完整键和对应值的节点）
  * This is the vanilla representation:
  *
  *              (f) ""
@@ -40,6 +42,9 @@
  * and only the link to the node representing the last character node is
  * provided inside the representation. So the above representation is turned
  * into:
+ * 然而，这个实现采用了一种非常常见的优化方式，其中连续的、只有一个子节点的节点会被"压缩"
+ * 到节点本身中作为一串字符，每个字符代表下一级的子节点，并且只在表示中提供指向代表
+ * 最后一个字符节点的链接。因此，上面的表示法被转换为：
  *
  *                  ["foo"] ""
  *                     |
@@ -54,6 +59,8 @@
  * "node splitting" operation is needed, since the "foo" prefix is no longer
  * composed of nodes having a single child one after the other. This is the
  * above tree and the resulting node splitting after this event happens:
+ * 然而，这种优化使得实现变得更加复杂一些。例如，如果在上述基数树中添加一个键 "first"，就需要进行"节点分裂"操作，
+ * 因为 "foo" 前缀不再是由连续的、只有一个子节点的节点组成了。
  *
  *
  *                    (f) ""

@@ -4,7 +4,8 @@
 // #include "../src/listpack.c"
 // #include "../src/dict.c"
 // #include "../src/quicklist.c"
-#include "../src/intset.c"
+// #include "../src/intset.c"
+#include "../src/zipmap.c"
 
 int main(int argc, char *argv[]) {
     UNUSED(argc);
@@ -37,8 +38,17 @@ int main(int argc, char *argv[]) {
     //     return 1;
     // }
 
+    // printf("Starting intsetTest internal tests...\n");
+    // if (intsetTest(argc, argv, 0) == 0) {
+    //     printf("All intsetTest internal tests passed!\n");
+    //     return 0;
+    // } else  {
+    //     printf("Some quicklist internal tests failed!\n");
+    //     return 1;
+    // }
+
     printf("Starting intsetTest internal tests...\n");
-    if (intsetTest(argc, argv, 0) == 0) {
+    if (zipmapTest(argc, argv, 0) == 0) {
         printf("All intsetTest internal tests passed!\n");
         return 0;
     } else  {
