@@ -239,8 +239,6 @@ unsigned char *zipmapSet(unsigned char *zm, unsigned char *key, unsigned int kle
             /* The +1 in the number of bytes to be moved is caused by the
              * end-of-zipmap byte. Note: the *original* zmlen is used.
              *
-             * 设 offset = 10, free = 8 , reqlen = 12 , zmlen=100
-             *
              */
             memmove(p+reqlen, p+freelen, zmlen-(offset+freelen+1));
             zmlen = zmlen-freelen+reqlen;

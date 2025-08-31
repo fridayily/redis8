@@ -289,16 +289,64 @@ static void test_quicklist_pop_numbers(void) {
 //     printf("PASSED: quicklistPop with partial parameters\n");
 // }
 
+void print_buffer(const char* buffer, int size) {
+    for(int i = 0; i < size; i++) {
+        printf("%c ", buffer[i]);
+    }
+    printf("\n");
+}
+
+static void test_quicklist_memmove(void)
+{
+
+    printf("=== 示例1: 基本内存移动 ===\n");
+    char buffer1[] = "abcdefgh";
+    printf("原始: %s\n", buffer1);
+
+    // 将前3个字符移动到第4个位置
+    memmove(buffer1 + 3, buffer1, 3);
+    printf("移动后: %s\n", buffer1);  // 输出: abcabcgh
+
+    printf("\n=== 示例2: 向前移动（数据压缩）===\n");
+    char buffer2[] = "hello....world";  // '.' 代表空闲空间
+    printf("原始: %s\n", buffer2);
+
+    // 将 "world" 向前移动，覆盖空闲空间
+    memmove(buffer2 + 5, buffer2 + 9, 6);  // 6包括'\0'
+    printf("移动后: %s\n", buffer2);  // 输出: hello\0orld (实际显示为 "hello")
+
+    printf("\n=== 示例3: 向前移动（数据压缩）===\n");
+    char buffer3[] = "hello....world";  // '.' 代表空闲空间
+    printf("原始: %s\n", buffer3);
+
+    // 将 "wor" 向前移动，覆盖空闲空间
+    memmove(buffer3 + 5, buffer3 + 9, 3);  // 6包括'\0'
+    printf("移动后: %s\n", buffer3);  // 输出: hello\0orld (实际显示为 "hello")
+
+    char c_array[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+    printf("移动前: %s\n", c_array); // 0123456789
+    memcpy((void *)&c_array[5], (void *)&c_array[3], 5);
+    printf("移动后: %s\n", c_array); // 0123434565
+    // 第1步: c_array[5] = c_array[3]  →  '5' = '3'  →  0123436789
+    // 第2步: c_array[6] = c_array[4]  →  '6' = '4'  →  0123434789
+    // 第3步: c_array[7] = c_array[5]  →  '7' = '3'  →  0123434389
+    // 第4步: c_array[8] = c_array[6]  →  '8' = '4'  →  0123434349
+    // 第5步: c_array[9] = c_array[7]  →  '9' = '3'  →  0123434343
+
+
+}
+
 int main(void)
 {
     printf("Starting quicklistPop tests...\n\n");
 
     // test_quicklist_add_iterm();
-    test_quicklist_iterator();
+    // test_quicklist_iterator();
     // test_quicklist_pop_basic();
     // test_quicklist_pop_tail();
     // test_quicklist_pop_numbers();
     // test_quicklist_pop_partial_params();
+    test_quicklist_memmove();
 
     printf("\nAll quicklistPop tests passed!\n");
     return 0;

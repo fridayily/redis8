@@ -48,9 +48,17 @@ mstr mstrNew(const char *initStr, size_t lenStr, int trymalloc) {
             break;
         }
         case MSTR_TYPE_8: {
+                // sizeof(mstrhdr8) = 3
             MSTR_HDR_VAR(8,s);
+                // 设置 info 字段
+                // ( (((len<<MSTR_META_BITS) + ismeta) << (MSTR_TYPE_BITS)) | type )
+                // ((len << 1) + 0) << 2)) | 1
             *pInfo = CREATE_MSTR_INFO(0 /*unused*/, 0 /*ismeta*/, type);
+                // 设置长度
             sh->len = lenStr;
+                // 存储一个 40 字节的字符
+                // 0x00    0x28  0x01  40字节字符串
+                // Unused  Len   info
             break;
         }
         case MSTR_TYPE_16: {
@@ -90,15 +98,18 @@ mstr mstrNewWithMeta(struct mstrKind *kind, const char *initStr, size_t lenStr, 
 
 
     /* mstrSumMetaLen() + sizeof(mstrFlags) + sizeof(mstrhdrX) + lenStr  */
-
+    // 元数据长度 + 2字节 mstrFlag + 头部 + 数据 + NULL
     size_t allocLen = sumMetaLen + sizeof(mstrFlags) + mstrHdr + lenStr + NULL_SIZE;
     allocMstr = trymalloc? s_trymalloc(allocLen) : s_malloc(allocLen);
 
     if (allocMstr == NULL) return NULL;
 
     /* metadata is located at the beginning of the allocation, then meta-flags and lastly the string */
+    // metaFlag 的指针
     mstrFlags *pMetaFlags = (mstrFlags *) (allocMstr + sumMetaLen) ;
+    // mstr 指针
     mstrPtr = ((char*) pMetaFlags) + sizeof(mstrFlags) + mstrHdr;
+
     pInfo = ((unsigned char*)mstrPtr) - 1;
 
     switch(type) {
@@ -138,6 +149,7 @@ mstr mstrNewCopy(struct mstrKind *kind, mstr src, mstrFlags newFlags) {
     mstr dst;
 
     /* if no flags are set, then just copy the string */
+    // 如果新标志为 0（没有元数据），则直接调用 mstrNew 创建一个不带元数据的副本。
     if (newFlags == 0) return mstrNew(src, mstrlen(src), 0);
 
     dst = mstrNewWithMeta(kind, src, mstrlen(src), newFlags, 0);
@@ -145,12 +157,14 @@ mstr mstrNewCopy(struct mstrKind *kind, mstr src, mstrFlags newFlags) {
 
     /* if metadata is attached to src, then selectively copy metadata */
     if (mstrIsMetaAttached(src)) {
+        // 获取源字符串和目标字符串的元数据标志指针
         mstrFlags *pFlags1 = mstrFlagsRef(src),
                 *pFlags2 = mstrFlagsRef(dst);
 
         mstrFlags flags1Shift = *pFlags1,
                 flags2Shift = *pFlags2;
 
+        // 这两行代码初始化了两个指针，它们指向源字符串和目标字符串的元数据标志位置。
         unsigned char *at1 = ((unsigned char *) pFlags1),
                 *at2 = ((unsigned char *) pFlags2);
 
@@ -162,6 +176,7 @@ mstr mstrNewCopy(struct mstrKind *kind, mstr src, mstrFlags newFlags) {
             if (isFlag1Set) at1 -= kind->metaSize[i];
             if (isFlag2Set) at2 -= kind->metaSize[i];
 
+            // 只有当源和目标都设置了相同标志位时，才复制该元数据
             if (isFlag1Set && isFlag2Set)
                 memcpy(at2, at1, kind->metaSize[i]);
             flags1Shift >>= 1;
@@ -184,10 +199,14 @@ void mstrFree(struct mstrKind *kind, mstr s) {
 mstrFlags *mstrFlagsRef(mstr s) {
     switch(s[-1]&MSTR_TYPE_MASK) {
         case MSTR_TYPE_5:
+        // sizeof(struct mstrhdr5) = 1
+        // 这里 mstrhdr 都是奇数,
             return ((mstrFlags *) (s - sizeof(struct mstrhdr5))) - 1;
         case MSTR_TYPE_8:
+        // sizeof(struct mstrhdr8) = 3
             return ((mstrFlags *) (s - sizeof(struct mstrhdr8))) - 1;
         case MSTR_TYPE_16:
+        // sizeof(struct mstrhdr16) =3
             return ((mstrFlags *) (s - sizeof(struct mstrhdr16))) - 1;
         default: /* MSTR_TYPE_64: */
             return ((mstrFlags *) (s - sizeof(struct mstrhdr64))) - 1;
@@ -206,7 +225,10 @@ void *mstrMetaRef(mstr s, struct mstrKind *kind, int flagIdx) {
     mstrFlags tmp = *pFlags;
 
     for (int i = 0 ; i <= flagIdx ; ++i) {
+        // tmp & 0x1 检查最低位是否为 1（即第 i 个元数据标志是否被设置）
+        // 如果设置了，则将该元数据的大小加到 metaOffset
         if (tmp & 0x1) metaOffset += kind->metaSize[i];
+        // 检查下一个标志位
         tmp >>= 1;
     }
     return ((char *)pFlags) - metaOffset;
@@ -466,8 +488,9 @@ int mstrTest(int argc, char **argv, int flags) {
         ttl = mstrMetaRef(s, &kind_mymstr, META_IDX_MYMSTR_TTL4);
         *ttl = 0x12345678;
 
+
         test_cond("Verify memory-allocation and string lengths",
-                  mstrAllocLen(s, &kind_mymstr) == (1 + 3 + 2 + 1 + 4) && /* mstrhdr5 + str + null + mstrFlags + TLL */
+                  mstrAllocLen(s, &kind_mymstr) == (1 + 3 + 2 + 1 + 4) && /* mstrhdr5 + str + mstrFlags + null + TLL */
                   mstrlen(s) == 3);
 
         unsigned char expMem[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x1c, 'f', 'o', 'o', '\0' };
@@ -487,6 +510,15 @@ int mstrTest(int argc, char **argv, int flags) {
                                  B(META_IDX_MYMSTR_TTL4) | B(META_IDX_MYMSTR_VALUE_PTR), 0);
         *((uint32_t *) (mstrMetaRef(s, &kind_mymstr,
                                     META_IDX_MYMSTR_TTL4))) = 0x12345678;
+
+        char *str = "abcdefg";
+
+        *((uint64_t *) (mstrMetaRef(s, &kind_mymstr,
+                                    META_IDX_MYMSTR_VALUE_PTR))) = (uint64_t)str;
+
+        uint64_t *str_v;
+        str_v = mstrMetaRef(s, &kind_mymstr,META_IDX_MYMSTR_VALUE_PTR);
+        assert(memcmp((char *)*str_v, str, 7) == 0);
 
         test_cond("Verify length and alloc length",
                   mstrAllocLen(s, &kind_mymstr) == (1 + 3 + 1 + 2 + 4 + 8) && /* mstrhdr5 + str + null + mstrFlags + TLL + PTR */

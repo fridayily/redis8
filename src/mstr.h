@@ -18,9 +18,16 @@
  * etc.). Pushing metadata logic into sds will make it very fragile, and complex
  * to maintain.
  *
+ * sds 字符串在整个系统中被广泛使用，是一种通用的数据存储容器。然而，在实际应用中，经常需要优化内存使用，
+ * 将字符串与元数据（metadata）聚合在一起，并作为单个单个数据块存储到 Redis 数据结构中。
+ * 有人可能会想，为什么不扩展 sds 使其支持元数据呢？答案是，sds 本质上是可变字符串，
+ * 且拥有丰富的 API（如分割、拼接等操作）。如果将元数据逻辑嵌入到 sds 中，会导致其变得非常脆弱，且难以维护
+ *
  * Another idea involved using a simple struct with flags and a dynamic buf[] at the
  * end. While this could be viable, it introduces considerable complexity and would
  * need maintenance across different contexts.
+ * 另一个思路是使用一个简单的结构体，包含标志（flags）和末尾的动态缓冲区（buf []）。
+ * 虽然这在理论上可行，但会引入相当大的复杂性，而且需要在不同场景下进行维护
  *
  * As an alternative, we introduce a new implementation of immutable strings,
  * with limited API, and with the option to attach metadata. The representation
@@ -28,6 +35,10 @@
  * without the API to manipulate the string. Only to attach metadata to it. The
  * following diagram shows the memory layout of mstring (mstrhdr8) when no
  * metadata is attached:
+ *
+ * 作为替代方案，我们引入了一种新的不可变字符串实现，它具有有限的 API，并且可以附加元数据。
+ * 在不包含任何元数据的情况下，这种字符串的基本表示形式与 SDS 类似，但没有用于操作字符串的 API，
+ * 仅支持为其附加元数据。下图展示了不附加元数据时，mstring（mstrhdr8）的内存布局
  *
  *     +----------------------------------------------+
  *     | mstrhdr8                       | c-string |  |
@@ -67,11 +78,20 @@
  * attach or not attach the metadata to it, and metadata flags (mFlags) of the
  * instance will reflect this decision.
  *
+ * mstr 允许定义不同种类（组）的 mstring，每种都有其独特的元数据布局。例如，对于哈希字段（hash-fields），
+ * 其所有实例都可以选择性地附加 TTL 元数据。要实现这一点，首先需要定义一个 mstrKind 结构体原型，
+ * 用于指定该特定种类的元数据布局和大小。这样一来，每个哈希字段实例仍然可以自由选择是否附加元数据，
+ * 而实例的元数据标志（mFlags）会反映这一选择。
+ *
  * In the future, the keys of Redis keyspace can be another kind of mstring that
  * has TTL, LRU or even dictEntry metadata embedded into. Unlike vptr in c++, this
  * struct won't be attached to mstring but will be passed as yet another argument
  * to API, to save memory. In addition, each instance of a given mstrkind can hold
  * any subset of metadata and the 8 bits of metadata-flags will reflect it.
+ *
+ * 未来，Redis 键空间的键可以是另一种 mstring，其中可以嵌入 TTL、LRU 甚至 dictEntry 等元数据。
+ * 与 C++ 中的 vptr 不同，这种结构体不会附加到 mstring 上，而是作为另一个参数传递给 API，以节省内存。此外，
+ * 给定 mstrkind 的每个实例可以包含元数据的任意子集，而 8 位的元数据标志（metadata-flags）会反映这一点。
  *
  * The following example shows how to define mstrKind for possible future keyspace
  * that aggregates several keyspace related metadata into one compact, singly
@@ -179,7 +199,7 @@ struct __attribute__ ((__packed__)) mstrhdr64 {
     unsigned char info; /* 2 lsb of type, 6 unused bits */
     char buf[];
 };
-
+// 16
 #define NUM_MSTR_FLAGS (sizeof(mstrFlags)*8)
 
 /* mstrKind is used to define a kind (a group) of mstring with its own metadata layout */
@@ -187,6 +207,8 @@ struct __attribute__ ((__packed__)) mstrhdr64 {
     const char *name;
     int metaSize[NUM_MSTR_FLAGS];
 } mstrKind;
+// sizeof(mstrKind) = 72
+// name 8 字节 metasize 64 字节
 
 mstr mstrNew(const char *initStr, size_t lenStr, int trymalloc);
 
@@ -204,7 +226,8 @@ void *mstrMetaRef(mstr s, struct mstrKind *kind, int flagIdx);
 
 size_t mstrlen(const mstr s);
 
-/* return non-zero if metadata is attached to mstring */
+/* return non-zero if metadata is attached to mstring   */
+//  4 = 0100 ,倒数第3位为 isMeta
 static inline int mstrIsMetaAttached(mstr s) { return s[-1] & MSTR_META_MASK; }
 
 /* return whether if a specific flag-index is set */
