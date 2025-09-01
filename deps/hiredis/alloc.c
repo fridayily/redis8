@@ -33,6 +33,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+// 全局变量初始化
+// 当程序加载 hiredis 库时，这个全局变量会在程序启动阶段自动初始化
 hiredisAllocFuncs hiredisAllocFns = {
     .mallocFn = malloc,
     .callocFn = calloc,

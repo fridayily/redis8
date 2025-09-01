@@ -6,16 +6,30 @@
 // #include "../src/quicklist.c"
 // #include "../src/intset.c"
 // #include "../src/zipmap.c"
+#include "../src/sds.c"
 #include "../src/testhelp.h"
-#include "../src/mstr.c"
+// #include "../src/mstr.c"
 
 // 定义测试框架所需的全局变量
 int __failed_tests = 0;
 int __test_num = 0;
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[])
+{
     UNUSED(argc);
     UNUSED(argv);
+    // sdsTest
+    printf("Starting listpack internal tests...\n");
+    if (sdsTest(argc, argv, 0) == 0)
+    {
+        printf("All listpack internal tests passed!\n");
+        return 0;
+    }
+    else
+    {
+        printf("Some listpack internal tests failed!\n");
+        return 1;
+    }
     // printf("Starting listpack internal tests...\n");
     // if (listpackTest(argc, argv, 0) == 0) {
     //     printf("All listpack internal tests passed!\n");
@@ -62,14 +76,15 @@ int main(int argc, char *argv[]) {
     //     return 1;
     // }
 
-    printf("Starting mstrTest internal tests...\n");
-    if (mstrTest(argc, argv, 0) == 0) {
-        printf("All mstrTest internal tests passed!\n");
-        return 0;
-    } else  {
-        printf("Some mstrTest internal tests failed!\n");
-        return 1;
-    }
-
-
+    // printf("Starting mstrTest internal tests...\n");
+    // if (mstrTest(argc, argv, 0) == 0)
+    // {
+    //     printf("All mstrTest internal tests passed!\n");
+    //     return 0;
+    // }
+    // else
+    // {
+    //     printf("Some mstrTest internal tests failed!\n");
+    //     return 1;
+    // }
 }

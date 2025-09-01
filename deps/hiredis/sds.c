@@ -375,7 +375,7 @@ hisds hi_sdsgrowzero(hisds s, size_t len) {
 
 /* Append the specified binary-safe string pointed by 't' of 'len' bytes to the
  * end of the specified hisds string 's'.
- *
+ * 用于将一个指定长度的二进制安全字符串追加到现有的 SDS 字符串末尾
  * After the call, the passed hisds string is no longer valid and all the
  * references must be substituted with the new pointer returned by the call. */
 hisds hi_sdscatlen(hisds s, const void *t, size_t len) {

@@ -110,11 +110,14 @@ add_executable(test_dict test_dict.c ${REDIS_DICT_SOURCES})
 add_executable(test_listpack test_listpack.c ${TEST_LISTPACK_SOURCES})
 add_executable(test_internal test_internal.c ${TEST_INTERNAL_SOURCES})
 add_executable(test_t_zset test_t_zset.c)  # 添加 zset 测试目标
+add_executable(hiredis_connection hiredis_connection.c)  # 添加 zset 测试目标
 
+add_executable(hiredis_example ${REDIS_SRC}/deps/hiredis/examples/example.c)
 
 # 链接系统库
 target_link_libraries(test_adlist m pthread)
 target_link_libraries(test_sds m pthread)
 target_link_libraries(test_dict m pthread)
 target_link_libraries(test_internal m pthread)
-target_link_libraries(test_t_zset hiredis m pthread)
+target_link_libraries(hiredis_connection hiredis m pthread)
+target_link_libraries(hiredis_example hiredis)

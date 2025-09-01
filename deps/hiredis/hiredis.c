@@ -341,6 +341,7 @@ int redisvFormatCommand(char **target, const char *format, va_list ap) {
                     newargv = hi_realloc(curargv,sizeof(char*)*(argc+1));
                     if (newargv == NULL) goto memory_err;
                     curargv = newargv;
+                    // 将当前参数保存到参数数组
                     curargv[argc++] = curarg;
                     totlen += bulklen(hi_sdslen(curarg));
 
@@ -350,6 +351,7 @@ int redisvFormatCommand(char **target, const char *format, va_list ap) {
                     touched = 0;
                 }
             } else {
+                // 保存输入参数
                 newarg = hi_sdscatlen(curarg,c,1);
                 if (newarg == NULL) goto memory_err;
                 curarg = newarg;
@@ -978,6 +980,7 @@ int redisBufferRead(redisContext *c) {
     if (c->err)
         return REDIS_ERR;
 
+    // 将结果读取到 buf 中
     nread = c->funcs->read(c, buf, sizeof(buf));
     if (nread < 0) {
         return REDIS_ERR;
@@ -1137,7 +1140,7 @@ int redisvAppendCommand(redisContext *c, const char *format, va_list ap) {
         __redisSetError(c,REDIS_ERR_OTHER,"Invalid format string");
         return REDIS_ERR;
     }
-
+    // 将命令字符串添加到 c 中
     if (__redisAppendCommand(c,cmd,len) != REDIS_OK) {
         hi_free(cmd);
         return REDIS_ERR;

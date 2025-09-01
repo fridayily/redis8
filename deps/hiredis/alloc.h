@@ -59,11 +59,13 @@ static inline void *hi_malloc(size_t size) {
     return hiredisAllocFns.mallocFn(size);
 }
 
+// nmemb 要分配的元素数量
+// size 单个元素的大小(字节)
 static inline void *hi_calloc(size_t nmemb, size_t size) {
     /* Overflow check as the user can specify any arbitrary allocator */
     if (SIZE_MAX / size < nmemb)
         return NULL;
-
+    // 用户自定义内存分配器
     return hiredisAllocFns.callocFn(nmemb, size);
 }
 
