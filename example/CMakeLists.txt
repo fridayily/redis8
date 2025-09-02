@@ -114,6 +114,11 @@ add_executable(hiredis_connection hiredis_connection.c)  # 添加 zset 测试目
 
 add_executable(hiredis_example ${REDIS_SRC}/deps/hiredis/examples/example.c)
 
+add_executable(getaddrinfo getaddrinfo.c)
+
+add_executable(socket_server socket_server.c)
+add_executable(socket_client socket_client.c)
+
 # 链接系统库
 target_link_libraries(test_adlist m pthread)
 target_link_libraries(test_sds m pthread)

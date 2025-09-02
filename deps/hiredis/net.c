@@ -416,11 +416,15 @@ int redisContextUpdateCommandTimeout(redisContext *c, const struct timeval *time
 static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
                                    const struct timeval *timeout,
                                    const char *source_addr) {
+    // 文件描述符
     redisFD s;
     int rv, n;
     char _port[6];  /* strlen("65535"); */
+    // ervinfo: 用于 DNS 查找的结果
     struct addrinfo hints, *servinfo, *bservinfo, *p, *b;
+    // blocking: 是否为阻塞模式
     int blocking = (c->flags & REDIS_BLOCK);
+    // reuseaddr: 是否启用地址重用
     int reuseaddr = (c->flags & REDIS_REUSEADDR);
     int reuses = 0;
     long timeout_msec = -1;
@@ -456,6 +460,7 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
         goto error;
     }
 
+    // 如果指定了源地址，则保存它用于绑定本地套接字。
     if (source_addr == NULL) {
         hi_free(c->tcp.source_addr);
         c->tcp.source_addr = NULL;
@@ -467,6 +472,7 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
     snprintf(_port, 6, "%d", port);
     memset(&hints,0,sizeof(hints));
     hints.ai_family = AF_INET;
+    // 流套接字（TCP）
     hints.ai_socktype = SOCK_STREAM;
 
     /* DNS lookup. To use dual stack, set both flags to prefer both IPv4 and
@@ -479,6 +485,11 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
     else
         hints.ai_family = AF_INET;
 
+    // getaddrinfo 根据指定的主机名和服务名,返回一个 struct addrinfo 结构体链表
+    //    int getaddrinfo(const char *node,     // 主机名或IP地址
+    //    const char *service,  // 服务名或端口号
+    //    const struct addrinfo *hints,   // 输入参数，指定查询条件
+    //    struct addrinfo **res);         // 输出参数，返回结果链表
     rv = getaddrinfo(c->tcp.host, _port, &hints, &servinfo);
     if (rv != 0 && hints.ai_family != AF_UNSPEC) {
         /* Try again with the other IP version. */
@@ -489,6 +500,7 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
         __redisSetError(c, REDIS_ERR_OTHER, gai_strerror(rv));
         return REDIS_ERR;
     }
+    // 遍历所有解析到的地址，尝试建立连接
     for (p = servinfo; p != NULL; p = p->ai_next) {
 addrretry:
         if ((s = socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == REDIS_INVALID_FD)
@@ -500,13 +512,14 @@ addrretry:
         if (c->tcp.source_addr) {
             int bound = 0;
             /* Using getaddrinfo saves us from self-determining IPv4 vs IPv6 */
+            // 解析源地址
             if ((rv = getaddrinfo(c->tcp.source_addr, NULL, &hints, &bservinfo)) != 0) {
                 char buf[128];
                 snprintf(buf,sizeof(buf),"Can't get addr: %s",gai_strerror(rv));
                 __redisSetError(c,REDIS_ERR_OTHER,buf);
                 goto error;
             }
-
+            // 设置地址重用
             if (reuseaddr) {
                 n = 1;
                 if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*) &n,
@@ -515,7 +528,7 @@ addrretry:
                     goto error;
                 }
             }
-
+            // 尝试绑定到指定源地址
             for (b = bservinfo; b != NULL; b = b->ai_next) {
                 if (bind(s,b->ai_addr,b->ai_addrlen) != -1) {
                     bound = 1;
@@ -540,11 +553,14 @@ addrretry:
         memcpy(c->saddr, p->ai_addr, p->ai_addrlen);
         c->addrlen = p->ai_addrlen;
 
+        // 连接建立
         if (connect(s,p->ai_addr,p->ai_addrlen) == -1) {
             if (errno == EHOSTUNREACH) {
+                // 主机不可达，尝试下一个地址
                 redisNetClose(c);
                 continue;
             } else if (errno == EINPROGRESS) {
+                // 非阻塞连接正在进行
                 if (blocking) {
                     goto wait_for_ready;
                 }
@@ -553,6 +569,7 @@ addrretry:
                  * for `connect()`
                  */
             } else if (errno == EADDRNOTAVAIL && reuseaddr) {
+                // 地址不可用且启用了地址重用
                 if (++reuses >= REDIS_CONNECT_RETRIES) {
                     goto error;
                 } else {
@@ -561,12 +578,14 @@ addrretry:
                 }
             } else {
                 wait_for_ready:
+                // 等待连接完成
                 if (redisContextWaitReady(c,timeout_msec) != REDIS_OK)
                     goto error;
                 if (redisSetTcpNoDelay(c) != REDIS_OK)
                     goto error;
             }
         }
+        // 连接完成处理
         if (blocking && redisSetBlocking(c,1) != REDIS_OK)
             goto error;
 
