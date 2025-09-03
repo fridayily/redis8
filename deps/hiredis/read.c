@@ -122,6 +122,9 @@ static char *readBytes(redisReader *r, unsigned int bytes) {
 }
 
 /* Find pointer to \r\n. */
+// 这个函数用于在给定的内存缓冲区中查找 \r\n（回车换行）序列，这是 Redis 协议中行结束的标记。
+// s: 要搜索的字符串起始指针
+// len: 要搜索的字符串长度
 static char *seekNewline(char *s, size_t len) {
     char *ret;
 
@@ -133,15 +136,18 @@ static char *seekNewline(char *s, size_t len) {
     len--;
 
     /* Look for the \r */
+    // 使用优化的 memchr 函数快速定位 \r
+    // memchr 是高度优化的内存搜索函数,  在大多数系统上使用 SIMD 指令加速搜索
+    // ret 是指向 \r 的指针,若返回消息合法下一个字符是 \n
     while ((ret = memchr(s, '\r', len)) != NULL) {
         if (ret[1] == '\n') {
             /* Found. */
             break;
         }
         /* Continue searching. */
-        ret++;
-        len -= ret - s;
-        s = ret;
+        ret++;  // 从上次搜索位置之后继续
+        len -= ret - s; // ret-s 是已搜索的长度,这里减去这个长度
+        s = ret; // 更新搜索起始位置
     }
 
     return ret;
@@ -228,8 +234,11 @@ static char *readLine(redisReader *r, int *_len) {
 
     p = r->buf+r->pos;
     s = seekNewline(p,(r->len-r->pos));
+    // s 是指向返回结果结束的地址, PONG\r\n  会指向\r
     if (s != NULL) {
+        // 数据的长度
         len = s-(r->buf+r->pos);
+        // 数据长度 + \r\n 的长度
         r->pos += len+2; /* skip \r\n */
         if (_len) *_len = len;
         return p;
@@ -362,6 +371,7 @@ static int processLineItem(redisReader *r) {
                 }
             }
             if (r->fn && r->fn->createString)
+                // 可以是 createStringObject 函数, 返回 redisReply 指针
                 obj = r->fn->createString(cur,p,len);
             else
                 obj = (void*)REDIS_REPLY_BIGNUM;
@@ -703,6 +713,8 @@ void redisReaderFree(redisReader *r) {
     hi_free(r);
 }
 
+// buf 是服务端返回的消息, len 是长度
+// 将读取到的消息追加到 redisReader 的 buf 中
 int redisReaderFeed(redisReader *r, const char *buf, size_t len) {
     hisds newbuf;
 
@@ -720,10 +732,10 @@ int redisReaderFeed(redisReader *r, const char *buf, size_t len) {
 
             r->pos = 0;
         }
-
+        // 追加旧的消息 r->buf 到newbuf
         newbuf = hi_sdscatlen(r->buf,buf,len);
         if (newbuf == NULL) goto oom;
-
+        // 给 r->buf 赋值
         r->buf = newbuf;
         r->len = hi_sdslen(r->buf);
     }

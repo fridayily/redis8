@@ -62,6 +62,7 @@ void redisNetClose(redisContext *c) {
 ssize_t redisNetRead(redisContext *c, char *buf, size_t bufcap) {
     ssize_t nread = recv(c->fd, buf, bufcap, 0);
     if (nread == -1) {
+        // EWOULDBLOCK 表示操作会阻塞，但套接字被设置为非阻塞模式，因此操作无法立即完成。
         if ((errno == EWOULDBLOCK && !(c->flags & REDIS_BLOCK)) || (errno == EINTR)) {
             /* Try again later */
             return 0;
@@ -105,6 +106,9 @@ static void __redisSetErrorFromErrno(redisContext *c, int type, const char *pref
 
     if (prefix != NULL)
         len = snprintf(buf,sizeof(buf),"%s: ",prefix);
+    // 线程安全的错误消息转换函数
+    // 将 errno 转换为对应的错误描述字符串
+    // 将结果写入指定的缓冲区位置
     strerror_r(errorno, (char *)(buf + len), sizeof(buf) - len);
     __redisSetError(c,type,buf);
 }
@@ -134,6 +138,7 @@ static int redisCreateSocket(redisContext *c, int type) {
     return REDIS_OK;
 }
 
+// 用于设置 Redis 连接套接字的阻塞/非阻塞模式
 static int redisSetBlocking(redisContext *c, int blocking) {
 #ifndef _WIN32
     int flags;
@@ -141,17 +146,20 @@ static int redisSetBlocking(redisContext *c, int blocking) {
     /* Set the socket nonblocking.
      * Note that fcntl(2) for F_GETFL and F_SETFL can't be
      * interrupted by a signal. */
+    // 获取当前套接字标志
     if ((flags = fcntl(c->fd, F_GETFL)) == -1) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,"fcntl(F_GETFL)");
         redisNetClose(c);
         return REDIS_ERR;
     }
 
+    // 修改标志位
     if (blocking)
         flags &= ~O_NONBLOCK;
     else
         flags |= O_NONBLOCK;
 
+    // 应用新标志
     if (fcntl(c->fd, F_SETFL, flags) == -1) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,"fcntl(F_SETFL)");
         redisNetClose(c);

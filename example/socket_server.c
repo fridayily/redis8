@@ -18,17 +18,32 @@ void handle_client(int client_fd, struct sockaddr_in *client_addr) {
     int bytes_received;
     time_t now;
 
+    // inet_ntoa 是一个用于网络编程的函数，用于将 IPv4 地址从二进制格式转换为点分十进制字符串表示。
     printf("Client connected: %s:%d\n",
            inet_ntoa(client_addr->sin_addr),
            ntohs(client_addr->sin_port));
 
     // 发送欢迎消息
     const char *welcome = "Welcome to TCP Server! Send 'quit' to disconnect.\n";
+    // ssize_t send(int sockfd, const void *buf, size_t len, int flags);
+    //   sockfd 已连接的客户端套接字描述符
+    //   buf（发送缓冲区）
+    //   len（数据长度）
+    //   flags 控制发送行为的标志
+    //       0 - 默认行为，阻塞发送直到数据被复制到内核缓冲区
+    //       MSG_DONTWAIT - 非阻塞发送
+    //       MSG_NOSIGNAL - 发送时不产生 SIGPIPE 信号
     send(client_fd, welcome, strlen(welcome), 0);
 
     // 处理客户端消息循环
     while (1) {
         memset(buffer, 0, BUFFER_SIZE);
+        // ssize_t recv(int sockfd, void *buf, size_t len, int flags);
+        //     sockfd 已连接的客户端套接字描述符
+        //     buf 指向存储接收数据的缓冲区
+        //     len（缓冲区长度）
+        //     flags 和 send 的 flags 有相同部分, 也有不同部分
+
         bytes_received = recv(client_fd, buffer, BUFFER_SIZE - 1, 0);
 
         if (bytes_received <= 0) {
@@ -114,6 +129,10 @@ int main() {
 
     // 6. 接受客户端连接
     while (1) {
+        // int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+        //  sockfd 通过 socket() 创建并经过 bind() 和 listen() 设置的监听套接字
+        //  addr 输出参数，用于存储连接客户端的地址信息
+        //  addrlen（地址结构长度）
         client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
         if (client_fd < 0) {
             perror("accept failed");

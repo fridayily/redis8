@@ -125,7 +125,7 @@ void freeReplyObject(void *reply) {
 static void *createStringObject(const redisReadTask *task, char *str, size_t len) {
     redisReply *r, *parent;
     char *buf;
-
+    // 根据任务类型,创建 redisReply ,如 REDIS_REPLY_STRING,
     r = createReplyObject(task->type);
     if (r == NULL)
         return NULL;
@@ -154,7 +154,7 @@ static void *createStringObject(const redisReadTask *task, char *str, size_t len
         buf[len] = '\0';
         r->len = len;
     }
-    r->str = buf;
+    r->str = buf; // 设置 reply 的内容
 
     if (task->parent) {
         parent = task->parent->obj;
@@ -689,6 +689,7 @@ void __redisSetError(redisContext *c, int type, const char *str) {
     c->err = type;
     if (str != NULL) {
         len = strlen(str);
+        // 错误消息的截取
         len = len < (sizeof(c->errstr)-1) ? len : (sizeof(c->errstr)-1);
         memcpy(c->errstr,str,len);
         c->errstr[len] = '\0';
@@ -714,7 +715,7 @@ static redisContext *redisContextInit(void) {
     c = hi_calloc(1, sizeof(*c));
     if (c == NULL)
         return NULL;
-
+    // 初始化 redisContext 的默认函数,如读、写操作
     c->funcs = &redisContextDefaultFuncs;
 
     c->obuf = hi_sdsempty();
@@ -985,6 +986,7 @@ int redisBufferRead(redisContext *c) {
     if (nread < 0) {
         return REDIS_ERR;
     }
+    // 读取成功,将消息存到 c->reader->buf 中
     if (nread > 0 && redisReaderFeed(c->reader, buf, nread) != REDIS_OK) {
         __redisSetError(c, c->reader->err, c->reader->errstr);
         return REDIS_ERR;
@@ -1006,7 +1008,7 @@ int redisBufferWrite(redisContext *c, int *done) {
     /* Return early when the context has seen an error. */
     if (c->err)
         return REDIS_ERR;
-
+    // c->buf 存储的是格式化的命令(RESP) 如 1\r\n$4\r\nPING\r\n
     if (hi_sdslen(c->obuf) > 0) {
         ssize_t nwritten = c->funcs->write(c);
         if (nwritten < 0) {
@@ -1032,6 +1034,11 @@ oom:
 
 /* Internal helper that returns 1 if the reply was a RESP3 PUSH
  * message and we handled it with a user-provided callback. */
+// PUSH 消息是 Redis 6.0 引入 RESP3 协议后新增的一种消息类型，
+// 用于服务器主动向客户端推送信息，而不需要客户端先发送请求。
+//      Pub/Sub 消息：订阅频道的消息推送
+//      键空间通知：键发生变化时的通知
+//      服务器事件：如客户端连接、断开等事件
 static int redisHandledPushReply(redisContext *c, void *reply) {
     if (reply && c->push_cb && redisIsPushReply(reply)) {
         c->push_cb(c->privdata, reply);
@@ -1056,10 +1063,11 @@ int redisGetReplyFromReader(redisContext *c, void **reply) {
  * redisGetReplyFromReader so as to not change its behavior. */
 static int redisNextInBandReplyFromReader(redisContext *c, void **reply) {
     do {
+        // 现在返回的消息还在 Reader 中, 现在写到 reply 中
         if (redisGetReplyFromReader(c, reply) == REDIS_ERR)
             return REDIS_ERR;
     } while (redisHandledPushReply(c, *reply));
-
+    // redisHandledPushReply 若返回的是 Push 消息,则可以继续循环
     return REDIS_OK;
 }
 
@@ -1075,15 +1083,17 @@ int redisGetReply(redisContext *c, void **reply) {
     if (aux == NULL && c->flags & REDIS_BLOCK) {
         /* Write until done */
         do {
+            // 发生命令到服务端
             if (redisBufferWrite(c,&wdone) == REDIS_ERR)
                 return REDIS_ERR;
         } while (!wdone);
 
         /* Read until there is a reply */
         do {
+            // 从服务端读取返回的消息,会放到 redisContext->redisReader->buf 中
             if (redisBufferRead(c) == REDIS_ERR)
                 return REDIS_ERR;
-
+            // 将读取的消息存到 aux
             if (redisNextInBandReplyFromReader(c,&aux) == REDIS_ERR)
                 return REDIS_ERR;
         } while (aux == NULL);
@@ -1193,7 +1203,9 @@ int redisAppendCommandArgv(redisContext *c, int argc, const char **argv, const s
 static void *__redisBlockForReply(redisContext *c) {
     void *reply;
 
+    // 检查上下文是否设置了阻塞标志。
     if (c->flags & REDIS_BLOCK) {
+        // 调用 redisGetReply 函数等待服务器响应
         if (redisGetReply(c,&reply) != REDIS_OK)
             return NULL;
         return reply;
