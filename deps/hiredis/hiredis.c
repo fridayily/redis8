@@ -1219,8 +1219,11 @@ void *redisvCommand(redisContext *c, const char *format, va_list ap) {
     return __redisBlockForReply(c);
 }
 
+// 调用函数时, 会将参数放入栈中
 void *redisCommand(redisContext *c, const char *format, ...) {
     va_list ap;
+    // 初始化 va_list 变量 ap
+    // 让 ap 指向第一个可变参数在栈中的位置
     va_start(ap,format);
     void *reply = redisvCommand(c,format,ap);
     va_end(ap);

@@ -118,6 +118,7 @@ add_executable(getaddrinfo getaddrinfo.c)
 
 add_executable(socket_server socket_server.c)
 add_executable(socket_client socket_client.c)
+add_executable(test_base test_base.c)
 
 # 链接系统库
 target_link_libraries(test_adlist m pthread)

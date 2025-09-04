@@ -116,6 +116,10 @@ typedef void (redisAsyncPushFn)(struct redisAsyncContext *, void *);
 extern "C" {
 #endif
 
+    // REDIS_REPLY_VERB 是 Redis RESP3 协议中的一种回复类型，
+    // 代表"Verbatim String"（逐字字符串）。
+    // vtype -> txt mkd json html
+
 /* This is the reply object returned by redisCommand() */
 typedef struct redisReply {
     int type; /* REDIS_REPLY_* */
