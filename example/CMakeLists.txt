@@ -130,6 +130,12 @@ add_executable(getaddrinfo getaddrinfo.c)
 add_executable(socket_server socket_server.c)
 add_executable(socket_client socket_client.c)
 add_executable(test_base test_base.c)
+add_executable(select_server select_server.c)
+add_executable(select_client select_client.c)
+add_executable(poll_server poll_server.c)
+add_executable(poll_client poll_client.c)
+add_executable(kqueue_server kqueue_server.c)
+add_executable(kqueue_client kqueue_client.c)
 
 # 链接系统库
 target_link_libraries(test_adlist m pthread)
