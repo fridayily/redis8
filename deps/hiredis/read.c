@@ -44,6 +44,8 @@
 
 #include "alloc.h"
 #include "read.h"
+
+#include "hiredis_debug.h"
 #include "sds.h"
 #include "win32.h"
 
@@ -228,13 +230,15 @@ static int string2ll(const char *s, size_t slen, long long *value) {
     return REDIS_OK;
 }
 
+// 从 reader buf 中消费一行数据
+// 返回行的开始,行的长度写到 _len
 static char *readLine(redisReader *r, int *_len) {
     char *p, *s;
     int len;
 
     p = r->buf+r->pos;
     s = seekNewline(p,(r->len-r->pos));
-    // s 是指向返回结果结束的地址, PONG\r\n  会指向\r
+    // s 是指向返回结果结束的地址,如结果是 PONG\r\n  会指向\r
     if (s != NULL) {
         // 数据的长度
         len = s-(r->buf+r->pos);
@@ -246,6 +250,22 @@ static char *readLine(redisReader *r, int *_len) {
     return NULL;
 }
 
+// 假设解析 Redis 命令 LRANGE mylist 0 -1 的返回结果：*3\r\n$5\r\nhello\r\n$5\r\nworld\r\n$4\r\ntest\r\n
+// 解析过程
+//   1.解析数组头 *3\r\n:
+//       创建数组任务，r->ridx = 0 → 1
+//       设置 elements = 3
+//   2.解析第一个元素 $5\r\nhello\r\n:
+//       成功解析后调用 moveToNextTask
+//       cur->idx = 0 → 1 (还未到末尾)
+//       重置任务状态，准备解析下一个元素
+//   3.解析第二个元素 $5\r\nworld\r\n:
+//       同样调用 moveToNextTask
+//       cur->idx = 1 → 2
+//   4.解析第三个元素 $4\r\ntest\r\n:
+//       调用 moveToNextTask
+//       cur->idx = 2，等于 prv->elements-1 = 2
+//       任务栈弹出，r->ridx = 1 → 0
 static void moveToNextTask(redisReader *r) {
     redisReadTask *cur, *prv;
     while (r->ridx >= 0) {
@@ -385,6 +405,7 @@ static int processLineItem(redisReader *r) {
                 }
             }
             if (r->fn && r->fn->createString)
+                // 可以是 createStringObject 函数, 返回 redisReply 指针
                 obj = r->fn->createString(cur,p,len);
             else
                 obj = (void*)(uintptr_t)(cur->type);
@@ -404,6 +425,8 @@ static int processLineItem(redisReader *r) {
     return REDIS_ERR;
 }
 
+// 如果是字符串类型,格式形如 $11\r\nhello world\r\n
+// 先解析出长度 11 ,然后根据长度读取字符串, 构造 createStringObject
 static int processBulkItem(redisReader *r) {
     redisReadTask *cur = r->task[r->ridx];
     void *obj = NULL;
@@ -411,13 +434,18 @@ static int processBulkItem(redisReader *r) {
     long long len;
     unsigned long bytelen;
     int success = 0;
+    D("r->ridx %d cur->idx %d",r->ridx,cur->idx);
 
+    // 假设有返回 $11\r\nhello world\r\n
+    // p 会指向 11\r\nhello world\r\n
+    // s 指向 \r\nhello world\r\n
+    // bytelen 指 11\r\n 区间的字符串长度
+    // string2ll 将其转为 11
     p = r->buf+r->pos;
     s = seekNewline(p,r->len-r->pos);
     if (s != NULL) {
         p = r->buf+r->pos;
         bytelen = s-(r->buf+r->pos)+2; /* include \r\n */
-
         if (string2ll(p, bytelen - 2, &len) == REDIS_ERR) {
             __redisReaderSetError(r,REDIS_ERR_PROTOCOL,
                     "Bad bulk string length");
@@ -440,6 +468,8 @@ static int processBulkItem(redisReader *r) {
         } else {
             /* Only continue when the buffer contains the entire bulk item. */
             bytelen += len+2; /* include \r\n */
+            // pos 之前已读取,之后未读取
+            // 这里保证在r->buf 合法范围内
             if (r->pos+bytelen <= r->len) {
                 if ((cur->type == REDIS_REPLY_VERB && len < 4) ||
                     (cur->type == REDIS_REPLY_VERB && s[5] != ':'))
@@ -509,6 +539,9 @@ static int processAggregateItem(redisReader *r) {
     long long elements;
     int root = 0, len;
 
+    // redisContext 初始化时, redisReaderCreateWithFunctions 会初始化 r->tasks 为 9
+    // 当 ridx 为 8 时,进行扩容
+    D("ridx=%d\n",r->ridx);
     if (r->ridx == r->tasks - 1) {
         if (redisReaderGrow(r) == REDIS_ERR)
             return REDIS_ERR;
@@ -557,6 +590,8 @@ static int processAggregateItem(redisReader *r) {
             }
 
             /* Modify task stack when there are more than 0 elements. */
+            // 如果是一个数组,元素数量大于0,则初始化一个 redisReadTask
+            // 令 idx =0, redisReaderGetReply 中 该值大于0 就会一直读
             if (elements > 0) {
                 cur->elements = elements;
                 cur->obj = obj;
@@ -583,8 +618,8 @@ static int processAggregateItem(redisReader *r) {
 static int processItem(redisReader *r) {
     redisReadTask *cur = r->task[r->ridx];
     char *p;
-
     /* check if we need to read type */
+    // cur->type 默认初始化为 -1, 这里的 r 还保留着上次服务端返回的信息,如上次返回的是 PONG\r\n, pos = 7, len = 7, 读取不到数据,返回 REDIS_ERR
     if (cur->type < 0) {
         if ((p = readBytes(r,1)) != NULL) {
             switch (p[0]) {
@@ -660,7 +695,7 @@ static int processItem(redisReader *r) {
         return REDIS_ERR; /* Avoid warning. */
     }
 }
-
+//  在 创建 redisContext 时初始化
 redisReader *redisReaderCreateWithFunctions(redisReplyObjectFunctions *fn) {
     redisReader *r;
 
@@ -715,6 +750,9 @@ void redisReaderFree(redisReader *r) {
 
 // buf 是服务端返回的消息, len 是长度
 // 将读取到的消息追加到 redisReader 的 buf 中
+// 即如果第一次发送命令 PING ,返回 +PONG\r\n, 第二次发送命令 set foo hello world ,返回 +OK\r\n
+// 此时 r->buf 保存 +PONG\r\n+OK\r\n
+// 如果还没有读取第二次返回的消息, pos=7, len =12
 int redisReaderFeed(redisReader *r, const char *buf, size_t len) {
     hisds newbuf;
 
@@ -771,10 +809,12 @@ int redisReaderGetReply(redisReader *r, void **reply) {
     }
 
     /* Process items in reply. */
+    // processItem 处理返回的数据,可能没有数据要处理,则返回 REDIS_ERR, 就执行 break
+    D("process item begin ridx=%d,pos=%lu",r->ridx,r->pos);
     while (r->ridx >= 0)
         if (processItem(r) != REDIS_OK)
             break;
-
+    D("process item end ridx=%d,pos=%lu",r->ridx,r->pos);
     /* Return ASAP when an error occurred. */
     if (r->err)
         return REDIS_ERR;

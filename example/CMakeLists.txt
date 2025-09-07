@@ -99,6 +99,16 @@ set(TEST_INTERNAL_SOURCES
         ${REDIS_SRC}/src/redisassert.c
 )
 
+set(TEST_HIREDIS_SOURCES
+        ${REDIS_SRC}/src/ae.c
+        ${REDIS_SRC}/src/anet.c
+        ${REDIS_SRC}/src/monotonic.c
+        ${REDIS_SRC}/src/zmalloc.c
+        ${REDIS_SRC}/src/redisassert.c
+        ${REDIS_SRC}/src/strl.c
+
+
+)
 
 
 #add_definitions(-DQL_TEST_VERBOSE=1)
@@ -113,6 +123,7 @@ add_executable(test_t_zset test_t_zset.c)  # 添加 zset 测试目标
 add_executable(hiredis_connection hiredis_connection.c)  # 添加 zset 测试目标
 
 add_executable(hiredis_example ${REDIS_SRC}/deps/hiredis/examples/example.c)
+add_executable(hiredis_example-ae ${REDIS_SRC}/deps/hiredis/examples/example-ae.c ${TEST_HIREDIS_SOURCES})
 
 add_executable(getaddrinfo getaddrinfo.c)
 
@@ -127,3 +138,4 @@ target_link_libraries(test_dict m pthread)
 target_link_libraries(test_internal m pthread)
 target_link_libraries(hiredis_connection hiredis m pthread)
 target_link_libraries(hiredis_example hiredis)
+target_link_libraries(hiredis_example-ae hiredis)

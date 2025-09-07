@@ -105,10 +105,10 @@ typedef struct redisAsyncContext {
 
     /* Subscription callbacks */
     struct {
-        redisCallbackList replies;
-        struct dict *channels;
-        struct dict *patterns;
-        int pending_unsubs;
+        redisCallbackList replies;  // 订阅模式下的命令回调
+        struct dict *channels;  // 频道订阅回调映射
+        struct dict *patterns;  // 模式订阅回调映射
+        int pending_unsubs;  // 待处理的取消订阅数量
     } sub;
 
     /* Any configured RESP3 PUSH handler */

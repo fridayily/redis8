@@ -124,6 +124,13 @@ static redisAsyncContext *redisAsyncInitialize(redisContext *c) {
     /* The regular connect functions will always set the flag REDIS_CONNECTED.
      * For the async API, we want to wait until the first write event is
      * received up before setting this flag, so reset it here. */
+    /*
+     * 同步连接函数（如 redisConnect）在连接建立后会立即设置 REDIS_CONNECTED 标志
+     * 但对于异步 API，连接建立的过程是异步的，不能立即认为连接已建立
+     *
+     * 这里清除由同步连接函数设置的 REDIS_CONNECTED 标志
+     * 异步连接需要等待第一个写事件（即实际的数据传输）成功后才认为连接真正建立
+     */
     c->flags &= ~REDIS_CONNECTED;
 
     ac->err = 0;

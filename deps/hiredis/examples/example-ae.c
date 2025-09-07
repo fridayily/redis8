@@ -41,6 +41,12 @@ void disconnectCallback(const redisAsyncContext *c, int status) {
 }
 
 int main (int argc, char **argv) {
+    // 忽略 SIGPIPE 信号
+    // 如果不忽略
+    //      客户端 → 发送数据到已关闭的连接 → 内核发送 SIGPIPE 信号 → 进程被终止
+    // 如果忽略
+    //     客户端 → 发送数据到已关闭的连接 → write() 返回 -1，errno 设置为 EPIPE
+    //     → 程序可以检查返回值并进行错误处理
     signal(SIGPIPE, SIG_IGN);
 
     redisAsyncContext *c = redisAsyncConnect("127.0.0.1", 6379);

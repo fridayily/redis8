@@ -44,6 +44,8 @@
 #include "async.h"
 #include "win32.h"
 
+#include "hiredis_debug.h"
+
 extern int redisContextUpdateConnectTimeout(redisContext *c, const struct timeval *timeout);
 extern int redisContextUpdateCommandTimeout(redisContext *c, const struct timeval *timeout);
 
@@ -334,10 +336,12 @@ int redisvFormatCommand(char **target, const char *format, va_list ap) {
     if (curarg == NULL)
         return -1;
 
+    //  c 形如 "SET %s %s"
     while(*c != '\0') {
         if (*c != '%' || c[1] == '\0') {
             if (*c == ' ') {
                 if (touched) {
+                    // 当遇到空格且当前参数已被修改时，将参数保存到数组
                     newargv = hi_realloc(curargv,sizeof(char*)*(argc+1));
                     if (newargv == NULL) goto memory_err;
                     curargv = newargv;
@@ -346,18 +350,21 @@ int redisvFormatCommand(char **target, const char *format, va_list ap) {
                     totlen += bulklen(hi_sdslen(curarg));
 
                     /* curarg is put in argv so it can be overwritten. */
+                    /* 为下一个参数准备新的SDS字符串 */
                     curarg = hi_sdsempty();
                     if (curarg == NULL) goto memory_err;
                     touched = 0;
                 }
             } else {
-                // 保存输入参数
+                // 保存输入参数, 如 PING, 每次添加一个字符到 newarg,
+                // hi_sdscatlen 可能改变 curarg 地址
                 newarg = hi_sdscatlen(curarg,c,1);
                 if (newarg == NULL) goto memory_err;
                 curarg = newarg;
                 touched = 1;
             }
         } else {
+            // 当前 c='%'
             char *arg;
             size_t size;
 
@@ -391,6 +398,7 @@ int redisvFormatCommand(char **target, const char *format, va_list ap) {
                     va_list _cpy;
 
                     /* Flags */
+                    // 在字符串 flag  中查找字符 *_p 的第一次出现的位置
                     while (*_p != '\0' && strchr(flags,*_p) != NULL) _p++;
 
                     /* Field width */
@@ -514,7 +522,7 @@ int redisvFormatCommand(char **target, const char *format, va_list ap) {
     /* Build the command at protocol level */
     cmd = hi_malloc(totlen+1);
     if (cmd == NULL) goto memory_err;
-
+    // 构造 RESP 格式的字符串到 cmd 如 1\r\n$4\r\nPING\r\n
     pos = sprintf(cmd,"*%d\r\n",argc);
     for (j = 0; j < argc; j++) {
         pos += sprintf(cmd+pos,"$%zu\r\n",hi_sdslen(curargv[j]));
@@ -982,7 +990,7 @@ int redisBufferRead(redisContext *c) {
         return REDIS_ERR;
 
     // 将结果读取到 buf 中
-    nread = c->funcs->read(c, buf, sizeof(buf));
+    nread = c->funcs->read(c, buf, sizeof(buf)); // redisNetRead
     if (nread < 0) {
         return REDIS_ERR;
     }
@@ -1010,7 +1018,7 @@ int redisBufferWrite(redisContext *c, int *done) {
         return REDIS_ERR;
     // c->buf 存储的是格式化的命令(RESP) 如 1\r\n$4\r\nPING\r\n
     if (hi_sdslen(c->obuf) > 0) {
-        ssize_t nwritten = c->funcs->write(c);
+        ssize_t nwritten = c->funcs->write(c); // redisNetWrite
         if (nwritten < 0) {
             return REDIS_ERR;
         } else if (nwritten > 0) {
@@ -1067,13 +1075,14 @@ static int redisNextInBandReplyFromReader(redisContext *c, void **reply) {
         if (redisGetReplyFromReader(c, reply) == REDIS_ERR)
             return REDIS_ERR;
     } while (redisHandledPushReply(c, *reply));
-    // redisHandledPushReply 若返回的是 Push 消息,则可以继续循环
+    // redisHandledPushReply 若reply是 Push 类型的消息, 则可以继续循环
     return REDIS_OK;
 }
 
 int redisGetReply(redisContext *c, void **reply) {
     int wdone = 0;
     void *aux = NULL;
+    // "aux" 通常是 "auxiliary"（辅助的、辅助用的）的缩写
 
     /* Try to read pending replies */
     if (redisNextInBandReplyFromReader(c,&aux) == REDIS_ERR)
@@ -1138,10 +1147,11 @@ int redisAppendFormattedCommand(redisContext *c, const char *cmd, size_t len) {
     return REDIS_OK;
 }
 
+// 将用户的输入格式化为 RESP 字符串,存到 c->obuf 中
 int redisvAppendCommand(redisContext *c, const char *format, va_list ap) {
     char *cmd;
     int len;
-
+    // 将用户输入转为符合 redis 格式的命令 (RESP)
     len = redisvFormatCommand(&cmd,format,ap);
     if (len == -1) {
         __redisSetError(c,REDIS_ERR_OOM,"Out of memory");
@@ -1213,11 +1223,55 @@ static void *__redisBlockForReply(redisContext *c) {
     return NULL;
 }
 
+// 这里的v表示 variadic, 即"可变参数"的意思
+// 带有 v 后缀的函数通常表示使用 va_list 参数的版本
 void *redisvCommand(redisContext *c, const char *format, va_list ap) {
     if (redisvAppendCommand(c,format,ap) != REDIS_OK)
         return NULL;
     return __redisBlockForReply(c);
 }
+
+// mac m4 下 redisCommand 汇编
+// x29 指向当前函数的栈帧基址
+// x30 (链接寄存器/Link Register),函数调用时自动保存返回地址
+// redisCommand:
+//     sub    sp, sp, #0x30   ; 分配48字节栈空间
+//     stp    x29, x30, [sp, #0x20] ;将 x29 的值存储到地址 sp + 0x20, 将 x30 的值存储到地址 sp + 0x28
+//     add    x29, sp, #0x20 ; 设置新的帧指针
+//     stur   x0, [x29, #-0x8] ; 保存 context 参数 (redisContext*)
+//     str    x1, [sp, #0x10] ; 保存 format 参数 (const char*)
+//     add    x9, sp, #0x8 ; x9 = argv数组存储位置
+//     add    x8, x29, #0x10 ;x8 = 参数存储区起始地址
+//     str    x8, [x9]  ; 构建argv[0]指向参数区
+//     ldur   x0, [x29, #-0x8] ; 重新加载 context 参数
+//     ldr    x1, [sp, #0x10] ; 重新加载 format 参数
+//     ldr    x2, [sp, #0x8] ; 加载 va_list (argv数组指针)
+//     bl     0x100ddab48                ; redisvCommand at hiredis.c:1216
+//     str    x0, [sp] ; 保存返回值
+//     ldr    x0, [sp] ; 重新加载返回值到x0 (准备返回)
+//     ldp    x29, x30, [sp, #0x20] ; 恢复帧指针和返回地址
+//     add    sp, sp, #0x30 ; 恢复栈指针
+//     ret
+//
+// 高地址
+// +------------------+ ← 调用者栈帧
+// | 返回地址         |
+// +------------------+ ← 原始sp (函数调用前)
+// | 保留空间         | 0x30-0x28
+// +------------------+
+// | 保存的x30        | 0x28 [sp+0x20+8]
+// +------------------+
+// | 保存的x29        | 0x20 [sp+0x20]
+// +------------------+
+// | context备份      | 0x18 [x29-0x8]
+// +------------------+
+// | format备份       | 0x10 [sp+0x10]
+// +------------------+
+// | argv数组指针     | 0x08 [sp+0x8]
+// +------------------+
+// | 保留空间         | 0x00 [sp]
+// +------------------+ ← 当前sp (函数调用后)
+// 低地址
 
 // 调用函数时, 会将参数放入栈中
 void *redisCommand(redisContext *c, const char *format, ...) {
