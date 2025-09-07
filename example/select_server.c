@@ -7,10 +7,23 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 #include <errno.h>
+#include <time.h>
+#include <sys/time.h>
 
 #define PORT 8888
 #define MAX_CLIENTS 10
 #define BUFFER_SIZE 1024
+
+void print_current_time(const char* message) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    time_t now = tv.tv_sec;
+    struct tm *tm_info = localtime(&now);
+    char time_buffer[64];
+
+    strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d %H:%M:%S", tm_info);
+    printf("%s: %s.%06ld\n", message, time_buffer, tv.tv_usec);
+}
 
 int main() {
     int server_fd, new_fd;
@@ -63,6 +76,7 @@ int main() {
         FD_SET(server_fd, &readfds);  // 添加服务器 socket
 
         // 添加客户端 socket 到集合
+        // max_fd 是 所有被监视的文件描述符中的最大值。
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (fds[i] != -1) {
                 FD_SET(fds[i], &readfds);
@@ -75,18 +89,48 @@ int main() {
         tv.tv_sec = 5;
         tv.tv_usec = 0;
 
+        // 同时监视多个socket，避免为每个连接创建线程/进程
+        // 等待任何socket变为可读状态
+        print_current_time("select begin");
+        // 三次握手发生在 select 阻塞期间
+        //     1.启动服务端
+        //     2.sudo tcpdump -i lo0 port 8888 -n
+        //     3.启动客户端
+        //     观察 tcpdump 日志可以发现三次握手发生在 select 阻塞期间
+        // 客户端                    服务器
+        //   |                       |  select() 阻塞
+        //   |                       |
+        //   |      SYN              |
+        //   |---------------------->|
+        //   |      SYN-ACK          |
+        //   |<----------------------|
+        //   |      ACK              |
+        //   |---------------------->|
+        //   |                       |
+        //   |                       |
+        //   |                       |
+        //   |<----------------------|  select() 返回
+        //   |                       |
         int activity = select(max_fd + 1, &readfds, NULL, NULL, &tv);
+        print_current_time("select end");
         if (activity == -1 && errno != EINTR) {
             perror("select fail");
             continue;
         }
 
-        // 检查新连接
+        // select返回后，readfds中只包含就绪的文件描述符
         if (FD_ISSET(server_fd, &readfds)) {
+            // 接受客户端的连接请求并创建一个新的连接套接字。
+
+            print_current_time("Accept called at");
+            // 立即返回
             if ((new_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len)) == -1) {
                 perror("accept fail");
                 continue;
             }
+            print_current_time("Accept called end");
+
+
 
             // 查找空闲位置存储新客户端
             int i;
