@@ -15,6 +15,7 @@
 #define BUFFER_SIZE 1024
 #define SERVER_PORT 8080
 
+// https://people.freebsd.org/~jlemon/papers/kqueue.pdf
 // 设置文件描述符为非阻塞模式
 int set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
@@ -186,8 +187,22 @@ int main() {
 
     printf("Server listening on port %d\n", SERVER_PORT);
 
-    // 添加服务器 socket 到 kqueue 监听读事件（新连接）
-    EV_SET(&ev_set, server_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+    // 设置 kevent 结构
+    EV_SET(&ev_set, // kevent 实例
+        server_fd, // ident: 要监视的文件描述符
+        EVFILT_READ, // filter: 事件类型（可读事件）
+        EV_ADD, // flags: 添加事件
+        0, // fflags: 过滤器特定标志
+        0, // data: 过滤器相关数据
+        NULL // udata: 用户数据
+        );
+    // 调用 kevent 注册事件
+    // kq 文件描述符
+    // &ev_set - 要注册的事件列表
+    // 1 - 变更列表中的事件数量
+    // NULL - 不接收事件
+    // 0 - 接收事件数组大小为 0
+    // NULL - 无超时
     if (kevent(kq, &ev_set, 1, NULL, 0, NULL) == -1) {
         perror("kevent add server fd");
         close(server_fd);
@@ -196,11 +211,30 @@ int main() {
     }
 
     // 添加定时器事件，每5秒触发一次
-    if (add_timer_event(kq, 1000, 5000) == -1) {
+    if (add_timer_event(kq, 1000, 10000) == -1) {
         close(server_fd);
         close(kq);
         exit(EXIT_FAILURE);
     }
+
+    // add_timer_event(kq, 1000, 5000);  // 5秒定时器
+    // add_timer_event(kq, 1001, 10000); // 10秒定时器
+    // add_timer_event(kq, 1002, 30000); // 30秒定时器
+
+    // 在事件处理中区分不同的定时器
+    // if (event->filter == EVFILT_TIMER) {
+    //     switch (event->ident) {
+    //     case 1000:
+    //         printf("5秒定时器触发\n");
+    //         break;
+    //     case 1001:
+    //         printf("10秒定时器触发\n");
+    //         break;
+    //     case 1002:
+    //         printf("30秒定时器触发\n");
+    //         break;
+    //     }
+    // }
 
     printf("Server started. Waiting for events...\n");
 

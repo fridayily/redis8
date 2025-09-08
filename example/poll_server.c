@@ -65,6 +65,13 @@ int main() {
 
     while (1) {
         // Call poll to wait for events
+        // int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+        // pollfd
+        //      fds 文件描述符
+        //      events 请求监视的事件
+        //      revents 实际发生的事件
+        // nfds 当前有效的 pollfd 元素数量
+        // timeout 超时时间
         activity = poll(fds, nfds, TIMEOUT);
 
         if (activity == -1) {

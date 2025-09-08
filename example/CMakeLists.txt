@@ -136,6 +136,7 @@ add_executable(poll_server poll_server.c)
 add_executable(poll_client poll_client.c)
 add_executable(kqueue_server kqueue_server.c)
 add_executable(kqueue_client kqueue_client.c)
+add_executable(kqueue_filesystem kqueue_filesystem.c)
 
 # 链接系统库
 target_link_libraries(test_adlist m pthread)
