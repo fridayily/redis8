@@ -517,6 +517,11 @@ addrretry:
         c->fd = s;
         if (redisSetBlocking(c,0) != REDIS_OK)
             goto error;
+
+        // 源地址,客户端的地址
+        // 正常连接不指定源地址
+        // 如果是多网卡环境或者防火墙限制,可以指定源地址
+        // redisContext *c = redisConnectBindNonBlock("192.168.1.100", 6379, "10.0.0.100");
         if (c->tcp.source_addr) {
             int bound = 0;
             /* Using getaddrinfo saves us from self-determining IPv4 vs IPv6 */
@@ -557,7 +562,9 @@ addrretry:
         c->saddr = hi_malloc(p->ai_addrlen);
         if (c->saddr == NULL)
             goto oom;
-
+        // getaddrinfo 会解析用户指定IP,将解析的结果放在 servinfo 的链表中
+        // p 是其中链表中的一个节点
+        // 这段处理还在 for 循环中
         memcpy(c->saddr, p->ai_addr, p->ai_addrlen);
         c->addrlen = p->ai_addrlen;
 
@@ -601,6 +608,7 @@ addrretry:
         rv = REDIS_OK;
         goto end;
     }
+    // 只要有一个连接成功就会跳转到 end ,不会执行到这里
     if (p == NULL) {
         char buf[128];
         snprintf(buf,sizeof(buf),"Can't create socket: %s",strerror(errno));

@@ -753,6 +753,8 @@ void redisReaderFree(redisReader *r) {
 // 即如果第一次发送命令 PING ,返回 +PONG\r\n, 第二次发送命令 set foo hello world ,返回 +OK\r\n
 // 此时 r->buf 保存 +PONG\r\n+OK\r\n
 // 如果还没有读取第二次返回的消息, pos=7, len =12
+//
+// buf 可能保存的是返回多个命令的结果(一次性返回的)
 int redisReaderFeed(redisReader *r, const char *buf, size_t len) {
     hisds newbuf;
 

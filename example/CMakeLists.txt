@@ -120,7 +120,11 @@ add_executable(test_dict test_dict.c ${REDIS_DICT_SOURCES})
 add_executable(test_listpack test_listpack.c ${TEST_LISTPACK_SOURCES})
 add_executable(test_internal test_internal.c ${TEST_INTERNAL_SOURCES})
 add_executable(test_t_zset test_t_zset.c)  # 添加 zset 测试目标
-add_executable(hiredis_connection hiredis_connection.c)  # 添加 zset 测试目标
+add_executable(hiredis_connection hiredis_connection.c)
+# 添加 zset 测试目标
+add_executable(hiredis_append_command hiredis_append_command.c)
+target_link_libraries(hiredis_append_command hiredis)
+# 添加 zset 测试目标
 
 add_executable(hiredis_example ${REDIS_SRC}/deps/hiredis/examples/example.c)
 add_executable(hiredis_example-ae ${REDIS_SRC}/deps/hiredis/examples/example-ae.c ${TEST_HIREDIS_SOURCES})
@@ -130,6 +134,7 @@ add_executable(getaddrinfo getaddrinfo.c)
 add_executable(socket_server socket_server.c)
 add_executable(socket_client socket_client.c)
 add_executable(test_base test_base.c)
+
 add_executable(select_server select_server.c)
 add_executable(select_client select_client.c)
 add_executable(poll_server poll_server.c)

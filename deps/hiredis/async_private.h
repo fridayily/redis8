@@ -69,6 +69,13 @@ static inline void refreshTimeout(redisAsyncContext *ctx) {
     }
 }
 
+// REDIS_EL_TIMER(ctx, ctx->c.command_timeout);
+// if ((ctx)->ev.scheduleTimer && (ctx->c.command_timeout &&
+//    ((ctx->c.command_timeout)->tv_sec || (ctx->c.command_timeout)->tv_usec)))
+//   {
+//     (ctx)->ev.scheduleTimer((ctx)->ev.data, *(ctx->c.command_timeout));
+//   }
+
 void __redisAsyncDisconnect(redisAsyncContext *ac);
 void redisProcessCallbacks(redisAsyncContext *ac);
 

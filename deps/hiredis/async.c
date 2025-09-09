@@ -114,11 +114,11 @@ static redisAsyncContext *redisAsyncInitialize(redisContext *c) {
     patterns = dictCreate(&callbackDict,NULL);
     if (patterns == NULL)
         goto oom;
-
+    // 重新分配内存
     ac = hi_realloc(c,sizeof(redisAsyncContext));
     if (ac == NULL)
         goto oom;
-
+    // redisAsyncContext 的第一个元素是 redisContext, 故可以这么做
     c = &(ac->c);
 
     /* The regular connect functions will always set the flag REDIS_CONNECTED.
@@ -252,6 +252,12 @@ redisAsyncSetConnectCallbackImpl(redisAsyncContext *ac, redisConnectCallback *fn
      * the first write event to be fired. This assumes the related event
      * library functions are already set. */
     _EL_ADD_WRITE(ac);
+    // do
+    // {
+    //     refreshTimeout(ac);
+    //     if ((ac)->ev.addWrite) (ac)->ev.addWrite((ac)->ev.data);
+    // }
+    // while (0);
 
     return REDIS_OK;
 }
@@ -821,17 +827,44 @@ void redisAsyncHandleTimeout(redisAsyncContext *ac) {
 
 /* Sets a pointer to the first argument and its length starting at p. Returns
  * the number of bytes to skip to get to the following argument. */
+/*
+ *
+*<参数数量>\r\n
+$<第一个参数长度>\r\n
+<第一个参数数据>\r\n
+$<第二个参数长度>\r\n
+<第二个参数数据>\r\n
+...
+
+SET key value
+在 RESP 协议中表示为：
+*3\r\n
+$3\r\n
+SET\r\n
+$3\r\n
+key\r\n
+$5\r\n
+value\r\n
+
+
+ */
 static const char *nextArgument(const char *start, const char **str, size_t *len) {
     const char *p = start;
     if (p[0] != '$') {
+        // 从 start 开始查找 $ 字符
+        // 成功p 指向 $, $后面是参数长度
         p = strchr(p,'$');
         if (p == NULL) return NULL;
     }
 
+    // 从 $ 后的第一个字符开始解析数字
     *len = (int)strtol(p+1,NULL,10);
+    // 查找 \r 字符（参数长度行的结束）
     p = strchr(p,'\r');
     assert(p);
+    // p+2 跳过 \r\n，指向参数内容的开始
     *str = p+2;
+    // 返回下一个参数的位置
     return p+2+(*len)+2;
 }
 
@@ -862,9 +895,14 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
     cb.unsubscribe_sent = 0;
 
     /* Find out which command will be appended. */
+    // 假设 cmd = "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n"
+    // 执行后 cstr 指向 SET  p 指向"$3\r\nkey\r\n"  clen =3
+    // 这里都是指针的移动, 没有开辟新的内存
     p = nextArgument(cmd,&cstr,&clen);
     assert(p != NULL);
+    // 存在 '$' 说明有下一个参数, hasnext = true
     hasnext = (p[0] == '$');
+    //  PSUBSCRIBE / PUNSUBSCRIBE 变体命令特殊处理
     pvariant = (tolower(cstr[0]) == 'p') ? 1 : 0;
     cstr += pvariant;
     clen -= pvariant;

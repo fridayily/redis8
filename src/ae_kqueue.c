@@ -63,6 +63,9 @@ static int aeApiCreate(aeEventLoop *eventLoop) {
     aeApiState *state = zmalloc(sizeof(aeApiState));
 
     if (!state) return -1;
+    // 分配存储 kevent 事件的数组
+    //  (sizeof(struct kevent))  * (eventLoop->setsize)
+    // 用于存储 kevent() 系统调用返回的就绪事件
     state->events = zmalloc(sizeof(struct kevent)*eventLoop->setsize);
     if (!state->events) {
         zfree(state);
@@ -74,6 +77,8 @@ static int aeApiCreate(aeEventLoop *eventLoop) {
         zfree(state);
         return -1;
     }
+    // 设置 kqueue 文件描述符的 FD_CLOEXEC 标志
+    // 防止在 exec 系列函数调用时文件描述符泄露给子进程
     anetCloexec(state->kqfd);
     state->eventsMask = zmalloc(EVENT_MASK_MALLOC_SIZE(eventLoop->setsize));
     memset(state->eventsMask, 0, EVENT_MASK_MALLOC_SIZE(eventLoop->setsize));

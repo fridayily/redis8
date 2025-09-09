@@ -59,6 +59,7 @@ static void redisAeWriteEvent(aeEventLoop *el, int fd, void *privdata, int mask)
 static void redisAeAddRead(void *privdata) {
     redisAeEvents *e = (redisAeEvents*)privdata;
     aeEventLoop *loop = e->loop;
+    // 检查状态，确保幂等性
     if (!e->reading) {
         e->reading = 1;
         aeCreateFileEvent(loop,e->fd,AE_READABLE,redisAeReadEvent,e);
@@ -99,6 +100,7 @@ static void redisAeCleanup(void *privdata) {
     hi_free(e);
 }
 
+// 用于将 Redis 异步客户端与 Redis 事件循环（aeEventLoop）集成的适配器函数
 static int redisAeAttach(aeEventLoop *loop, redisAsyncContext *ac) {
     redisContext *c = &(ac->c);
     redisAeEvents *e;
@@ -112,10 +114,10 @@ static int redisAeAttach(aeEventLoop *loop, redisAsyncContext *ac) {
     if (e == NULL)
         return REDIS_ERR;
 
-    e->context = ac;
-    e->loop = loop;
-    e->fd = c->fd;
-    e->reading = e->writing = 0;
+    e->context = ac;  // 保存异步上下文引用
+    e->loop = loop;  // 保存事件循环引用
+    e->fd = c->fd;  // 保存文件描述符
+    e->reading = e->writing = 0;  // 初始化读写状态
 
     /* Register functions to start/stop listening for events */
     ac->ev.addRead = redisAeAddRead;

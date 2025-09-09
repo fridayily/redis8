@@ -717,6 +717,11 @@ static void redisPushAutoFree(void *privdata, void *reply) {
     freeReplyObject(reply);
 }
 
+/*
+ * 初始化 redisContext
+ * 1.设置同步读写函数、异步读写函数、关闭 fd 函数
+ * 2.设置处理服务端返回的 StringObject, ArrayObject 的函数
+ */
 static redisContext *redisContextInit(void) {
     redisContext *c;
 
@@ -727,6 +732,7 @@ static redisContext *redisContextInit(void) {
     c->funcs = &redisContextDefaultFuncs;
 
     c->obuf = hi_sdsempty();
+    // 初始化返回 redis 对象函数,如 StringObject, ArrayObject
     c->reader = redisReaderCreate();
     c->fd = REDIS_INVALID_FD;
 
@@ -816,6 +822,11 @@ int redisReconnect(redisContext *c) {
     return ret;
 }
 
+/*
+ * options 是用户的配置信息
+ * 这里用配置信息初始化 redisContext
+ *
+ */
 redisContext *redisConnectWithOptions(const redisOptions *options) {
     redisContext *c = redisContextInit();
     if (c == NULL) {
@@ -990,6 +1001,7 @@ int redisBufferRead(redisContext *c) {
         return REDIS_ERR;
 
     // 将结果读取到 buf 中
+    // 可能一次性返回多个命令的返回
     nread = c->funcs->read(c, buf, sizeof(buf)); // redisNetRead
     if (nread < 0) {
         return REDIS_ERR;
@@ -1085,6 +1097,12 @@ int redisGetReply(redisContext *c, void **reply) {
     // "aux" 通常是 "auxiliary"（辅助的、辅助用的）的缩写
 
     /* Try to read pending replies */
+    /*
+     * 如使用 redisAppendCommand 一次性提交多个命令, 会返回多个结果
+     * 每次调用 redisGetReply 获取一个结果
+     * 第二次调用 redisGetReply 从缓存中获取结果,不需要访问服务端
+     * 数据会写到 aux, aux!=NULL ,会直接返回
+     */
     if (redisNextInBandReplyFromReader(c,&aux) == REDIS_ERR)
         return REDIS_ERR;
 
@@ -1124,6 +1142,13 @@ int redisGetReply(redisContext *c, void **reply) {
  * Write a formatted command to the output buffer. When this family
  * is used, you need to call redisGetReply yourself to retrieve
  * the reply (or replies in pub/sub).
+ *
+ * 将格式化的命令存到 c->obuf
+ * 这时候c->obuf 一般是空的,只有一个 cmd 命令
+ * 但使用 redisAppendCommand 是,可以一次性发送多个命令
+ *      redisAppendCommand(c, "SET key1 value1");
+ *      redisAppendCommand(c, "SET key2 value2");
+ * c->reader->buf 存储的是服务端的返回,是 append 的
  */
 int __redisAppendCommand(redisContext *c, const char *cmd, size_t len) {
     hisds newbuf;
