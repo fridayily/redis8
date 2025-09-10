@@ -56,6 +56,7 @@ int main (int argc, char **argv) {
         return 1;
     }
 
+    // 创建事件循环
     loop = aeCreateEventLoop(64);
     redisAeAttach(loop, c);
     redisAsyncSetConnectCallback(c,connectCallback);

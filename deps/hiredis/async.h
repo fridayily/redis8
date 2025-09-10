@@ -76,6 +76,7 @@ typedef struct redisAsyncContext {
 
     /* Event library data and hooks */
     struct {
+        // redisAeAttach 中有设置 data 为 redisAeEvents
         void *data;
 
         /* Hooks that are called when the library expects to start

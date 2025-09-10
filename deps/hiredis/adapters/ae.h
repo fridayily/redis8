@@ -116,7 +116,7 @@ static int redisAeAttach(aeEventLoop *loop, redisAsyncContext *ac) {
 
     e->context = ac;  // 保存异步上下文引用
     e->loop = loop;  // 保存事件循环引用
-    e->fd = c->fd;  // 保存文件描述符
+    e->fd = c->fd;  // 保存文件描述符, 这里是 redisContext 的fd ,即客户端 fd
     e->reading = e->writing = 0;  // 初始化读写状态
 
     /* Register functions to start/stop listening for events */

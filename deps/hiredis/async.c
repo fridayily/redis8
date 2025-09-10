@@ -300,6 +300,24 @@ static int __redisPushCallback(redisCallbackList *list, redisCallback *source) {
     list->tail = cb;
     return REDIS_OK;
 }
+/*
+┌─────────────┐
+│   tail      │──────────────────────┐
+├─────────────┤                      │
+│   head      │                      │
+└─────────────┘                      │
+       │                             │
+       ▼                             ▼
+   ┌─────────┐    ┌─────────┐    ┌─────────┐
+   │ Callback│    │ Callback│    │ Callback│
+   │   1     │    │   2     │    │   2     │
+   ├─────────┤    ├─────────┤    ├─────────┤
+   │ next    │───▶│ next    │───▶│ next    │───▶ NULL
+   ├─────────┤    ├─────────┤    ├─────────┤
+   │ fn      │    │ fn      │    │ fn      │
+   │ privdata│    │ privdata│    │ privdata│
+   └─────────┘    └─────────┘    └─────────┘
+ */
 
 static int __redisShiftCallback(redisCallbackList *list, redisCallback *target) {
     redisCallback *cb = list->head;
@@ -1004,6 +1022,12 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
 
     /* Always schedule a write when the write buffer is non-empty */
     _EL_ADD_WRITE(ac);
+    // do
+    // {
+    //     refreshTimeout(ac);
+    //     if ((ac)->ev.addWrite) (ac)->ev.addWrite((ac)->ev.data);
+    // }
+    // while (0);
 
     return REDIS_OK;
 oom:

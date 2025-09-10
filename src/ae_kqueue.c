@@ -35,11 +35,14 @@
 
 typedef struct aeApiState {
     int kqfd;
+    // 存储就绪事件的数组
     struct kevent *events;
 
     /* Events mask for merge read and write event.
      * To reduce memory consumption, we use 2 bits to store the mask
-     * of an event, so that 1 byte will store the mask of 4 events. */
+     * of an event, so that 1 byte will store the mask of 4 events.
+     * 为了节省内存，使用2个bit存储一个事件的掩码，这样1个字节可以存储4个事件的掩码
+     */
     char *eventsMask; 
 } aeApiState;
 
@@ -59,6 +62,7 @@ static inline void resetEventMask(char *eventsMask, int fd) {
     eventsMask[fd/4] &= ~EVENT_MASK_ENCODE(fd, 0x3);
 }
 
+// 初始化 kqueue 实例
 static int aeApiCreate(aeEventLoop *eventLoop) {
     aeApiState *state = zmalloc(sizeof(aeApiState));
 
@@ -71,6 +75,7 @@ static int aeApiCreate(aeEventLoop *eventLoop) {
         zfree(state);
         return -1;
     }
+    // 初始化 kqueue 实例
     state->kqfd = kqueue();
     if (state->kqfd == -1) {
         zfree(state->events);
@@ -141,9 +146,12 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
         struct timespec timeout;
         timeout.tv_sec = tvp->tv_sec;
         timeout.tv_nsec = tvp->tv_usec * 1000;
+        // timeout = {0, 0}（立即返回),轮询模式，检查是否有已就绪事件
+        // timeout = {seconds, nanoseconds}（限时等待）
         retval = kevent(state->kqfd, NULL, 0, state->events, eventLoop->setsize,
                         &timeout);
     } else {
+        // 等待事件发生 timeout = NULL（无限等待）,直到有事件发生
         retval = kevent(state->kqfd, NULL, 0, state->events, eventLoop->setsize,
                         NULL);
     }

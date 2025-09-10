@@ -92,6 +92,15 @@ typedef struct aeEventLoop {
     void *privdata[2];
 } aeEventLoop;
 
+/*
+* eventLoop->events 数组在内存中的布局：
+地址         内容
+0x100000  -> [aeFileEvent (fd=0)][aeFileEvent (fd=1)][aeFileEvent (fd=2)]...
+              ^                  ^                  ^
+              |                  |                  |
+            events[0]          events[1]          events[2]
+ */
+
 /* Prototypes */
 aeEventLoop *aeCreateEventLoop(int setsize);
 void aeDeleteEventLoop(aeEventLoop *eventLoop);

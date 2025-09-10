@@ -513,7 +513,7 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
 addrretry:
         if ((s = socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == REDIS_INVALID_FD)
             continue;
-
+        // 客户端 fd
         c->fd = s;
         if (redisSetBlocking(c,0) != REDIS_OK)
             goto error;
