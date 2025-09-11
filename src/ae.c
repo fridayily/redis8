@@ -200,10 +200,13 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
 
 /*
  * aeFileEvent 是连续的数组,通过索引来访问
-    ┌─────────────┐────────────┐────────────┐
-    │    fd0      │    fd1     │   fd2      │
-    │ aeFileEvent │aeFileEvent │ aeFileEvent│
-    └─────────────┘────────────┘────────────┘
+ *          0             1             2           3
+    ┌─────────────┐─────────────┐─────────────┐─────────────┐
+    │ mask        │ mask        │ mask        │ mask        │
+    │ *rfileProc  │ *rfileProc  │ *rfileProc  │ *rfileProc  │
+    │ *wfileProc  │ *wfileProc  │ *wfileProc  │ *wfileProc  │
+    │ *clientData │ *clientData │ *clientData │ *clientData │
+    └─────────────┘─────────────┘─────────────┘─────────────┘
  *
  *
  */
