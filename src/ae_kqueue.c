@@ -34,6 +34,7 @@
 #include <sys/time.h>
 
 typedef struct aeApiState {
+    // 创建 kqueue 实例时返回的 fd
     int kqfd;
     // 存储就绪事件的数组
     struct kevent *events;
@@ -165,7 +166,13 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
          * However, under kqueue, read and write events would be separate
          * events, which would make it impossible to control the order of
          * reads and writes. So we store the event's mask we've got and merge
-         * the same fd events later. */
+         * the same fd events later.
+         *
+         * 假设 fd=5 同时可读可写
+         *   kqueue 可能返回两个独立的 kevent 结构：
+         *   kevent1: {ident=5, filter=EVFILT_READ, ...}   // 可读事件
+         *   kevent2: {ident=5, filter=EVFILT_WRITE, ...}  // 可写事件
+         */
         for (j = 0; j < retval; j++) {
             struct kevent *e = state->events+j;
             int fd = e->ident;
@@ -173,6 +180,11 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
 
             if (e->filter == EVFILT_READ) mask = AE_READABLE;
             else if (e->filter == EVFILT_WRITE) mask = AE_WRITABLE;
+            // 合并掩码
+            // 如果不合并，Redis 会分别处理这两个事件，可能导致
+            //     同一个 fd 被处理两次
+            //     无法控制读写事件的处理顺序
+            //     无法正确处理 AE_BARRIER 标志
             addEventMask(state->eventsMask, fd, mask);
         }
 
@@ -182,11 +194,14 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
         for (j = 0; j < retval; j++) {
             struct kevent *e = state->events+j;
             int fd = e->ident;
+            // 获取合并后的掩码
             int mask = getEventMask(state->eventsMask, fd);
 
             if (mask) {
                 eventLoop->fired[numevents].fd = fd;
+                // 包含读写事件的合并掩码
                 eventLoop->fired[numevents].mask = mask;
+                // 清除已处理的掩码
                 resetEventMask(state->eventsMask, fd);
                 numevents++;
             }
@@ -194,7 +209,7 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
     } else if (retval == -1 && errno != EINTR) {
         panic("aeApiPoll: kevent, %s", strerror(errno));
     }
-
+    // 合并读写事件后实际的事件数
     return numevents;
 }
 

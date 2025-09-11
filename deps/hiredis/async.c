@@ -769,6 +769,7 @@ void redisAsyncHandleRead(redisAsyncContext *ac) {
     c->funcs->async_read(ac);
 }
 
+// redisContextFuncs 中的 async_write
 void redisAsyncWrite(redisAsyncContext *ac) {
     redisContext *c = &(ac->c);
     int done = 0;
@@ -1020,7 +1021,9 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
 
     __redisAppendCommand(c,cmd,len);
 
-    /* Always schedule a write when the write buffer is non-empty */
+    /* Always schedule a write when the write buffer is non-empty
+     * 添加写事件
+     */
     _EL_ADD_WRITE(ac);
     // do
     // {

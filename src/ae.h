@@ -89,6 +89,8 @@ typedef struct aeEventLoop {
     aeBeforeSleepProc *beforesleep;
     aeBeforeSleepProc *aftersleep;
     int flags;
+    // 可以存储两个任意类型的指针，通常用于存储用户自定义的上下文数据。
+    // sizeof(eventLoop->privdata) = 16
     void *privdata[2];
 } aeEventLoop;
 

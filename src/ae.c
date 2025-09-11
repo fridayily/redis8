@@ -198,6 +198,16 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
     return AE_OK;
 }
 
+/*
+ * aeFileEvent 是连续的数组,通过索引来访问
+    ┌─────────────┐────────────┐────────────┐
+    │    fd0      │    fd1     │   fd2      │
+    │ aeFileEvent │aeFileEvent │ aeFileEvent│
+    └─────────────┘────────────┘────────────┘
+ *
+ *
+ */
+
 void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask)
 {
     if (fd >= eventLoop->setsize) return;
@@ -254,6 +264,7 @@ long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
     te->finalizerProc = finalizerProc;
     // 设置私有数据
     te->clientData = clientData;
+    // 头节点的 prev 总是 NULL
     te->prev = NULL;
     te->next = eventLoop->timeEventHead;
     te->refcount = 0;
@@ -263,6 +274,32 @@ long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
     eventLoop->timeEventHead = te;
     return id;
 }
+
+/*
+head (eventLoop->timeEventHead)
+  ↓
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   Event 1   │    │   Event 2   │    │   Event 3   │    │   Event N   │
+│             │    │             │    │             │    │             │
+│ id: 1       │    │ id: 2       │    │ id: 3       │    │ id: N       │
+│ when: 1000  │    │ when: 1500  │    │ when: 2000  │    │ when: 5000  │
+│ timeProc    │    │ timeProc    │    │ timeProc    │    │ timeProc    │
+│ finalizer   │    │ finalizer   │    │ finalizer   │    │ finalizer   │
+│ clientData  │    │ clientData  │    │ clientData  │    │ clientData  │
+│ refcount: 0 │    │ refcount: 0 │    │ refcount: 0 │    │ refcount: 0 │
+│             │    │             │    │             │    │             │
+│ prev: NULL  │←───│ prev: ──────│←───│ prev: ──────│←───│ prev: ──────│
+│ next: ──────│───→│ next: ──────│───→│ next: ──────│───→│ next: NULL  │
+└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+
+链表特点：
+1. 单向链表（通过 next 指针）
+2. 可以反向遍历（通过 prev 指针）
+3. 头节点的 prev 为 NULL
+4. 尾节点的 next 为 NULL
+5. 新事件总是插入到链表头部
+*/
+
 
 int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
 {
@@ -285,11 +322,15 @@ int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
  * 1) Insert the event in order, so that the nearest is just the head.
  *    Much better but still insertion or deletion of timers is O(N).
  * 2) Use a skiplist to have this operation as O(1) and insertion as O(log(N)).
+ *
+ * 计算距离下一个最早触发的定时器事件还需要等待的时间（微秒）。
  */
 static int64_t usUntilEarliestTimer(aeEventLoop *eventLoop) {
     aeTimeEvent *te = eventLoop->timeEventHead;
+    // 没有定时器事件，返回 -1
     if (te == NULL) return -1;
 
+    // 遍历所有定时器事件找到最早触发的
     aeTimeEvent *earliest = NULL;
     while (te) {
         if ((!earliest || te->when < earliest->when) && te->id != AE_DELETED_EVENT_ID)
@@ -298,6 +339,8 @@ static int64_t usUntilEarliestTimer(aeEventLoop *eventLoop) {
     }
 
     monotime now = getMonotonicUs();
+    // 如果已经到了触发时间，返回 0（不需要等待）
+    // 否则返回还需要等待的微秒数
     return (now >= earliest->when) ? 0 : earliest->when - now;
 }
 
@@ -407,7 +450,11 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
      * to fire. */
 
     /* 注意，即使没有文件事件需要处理，只要我们想要处理时间事件，
-     * 我们仍然需要调用 aeApiPoll()，以便休眠直到下一个时间事件准备触发。*/
+     * 我们仍然需要调用 aeApiPoll()，以便休眠直到下一个时间事件准备触发。
+     *
+     * eventLoop->maxfd != -1 说明已经注册了文件事件
+     * 否则没有注册,只有时间事件,这种情况下也会调用 aeApiPoll() 来休眠指定的时间
+     */
     if (eventLoop->maxfd != -1 ||
         ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
         int j;
@@ -440,6 +487,11 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
          * some event fires. */
         // 调用底层多路复用API等待事件
         // 在这里会阻塞, tvp 决定
+        // 如果 flag 只有 AE_TIME_EVENTS, 则会阻塞 tvp 时长,然后去处理时间事件
+        // 如果 flag 只有 AE_FILE_EVENTS, 则无限等待文件事件的发生
+        // 如果 flag 两种事件都有设置
+        //      如果设置了 AE_FILE_EVENTS, 立即返回
+        //      否则会至多等待 tvp 时长
         numevents = aeApiPoll(eventLoop, tvp);
 
         /* Don't process file events if not requested. */
@@ -519,6 +571,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
     }
     /* Check time events */
     // 处理时间事件
+    // 如果只有时间事件,这里肯定有事件可以处理,因为上面有延迟等待
+    // 如果两个都有,可能没有时间事件需要处理
     if (flags & AE_TIME_EVENTS)
         processed += processTimeEvents(eventLoop);
 
