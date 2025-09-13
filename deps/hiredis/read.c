@@ -276,7 +276,7 @@ static void moveToNextTask(redisReader *r) {
         }
 
         cur = r->task[r->ridx];
-        prv = r->task[r->ridx-1];
+        prv = r->task[r->ridx-1]; // 如果是 Array[StringObject] ,第一次创建了一个StringObject ,准备创建下一个时: prev 是ArrayObject, cur 是 StringObject
         assert(prv->type == REDIS_REPLY_ARRAY ||
                prv->type == REDIS_REPLY_MAP ||
                prv->type == REDIS_REPLY_SET ||
@@ -288,7 +288,7 @@ static void moveToNextTask(redisReader *r) {
             assert(cur->idx < prv->elements);
             cur->type = -1;
             cur->elements = -1;
-            cur->idx++;
+            cur->idx++; // 如果是 array, 则是索引
             return;
         }
     }
@@ -444,7 +444,7 @@ static int processBulkItem(redisReader *r) {
     p = r->buf+r->pos;
     s = seekNewline(p,r->len-r->pos);
     if (s != NULL) {
-        p = r->buf+r->pos;
+        p = r->buf+r->pos; // todo 这里 p 的赋值和上面重复,可以优化
         bytelen = s-(r->buf+r->pos)+2; /* include \r\n */
         if (string2ll(p, bytelen - 2, &len) == REDIS_ERR) {
             __redisReaderSetError(r,REDIS_ERR_PROTOCOL,
@@ -479,6 +479,12 @@ static int processBulkItem(redisReader *r) {
                             "missing or incorrectly encoded.");
                     return REDIS_ERR;
                 }
+                // 如果返回的是 ArrayObject[StringObject]
+                // 解析 StringObject 时
+                //    cur 记录当前解析的返回类型,元素的索引, parent 的类型(ArrayObject)
+                //    cur 不负责存储解析出来的数据, 而是通过 parent 指针,存储在 parent->element[idx] 中
+                // 可以用 ((redisReply *)r->task[0]->obj)->element[1] 查看存储的数据
+                // 在这种情况下, obj 变量在赋值后后续代码没有使用
                 if (r->fn && r->fn->createString)
                     obj = r->fn->createString(cur,s+2,len);
                 else
@@ -487,7 +493,10 @@ static int processBulkItem(redisReader *r) {
             }
         }
 
-        /* Proceed when obj was created. */
+        /* Proceed when obj was created.
+         *
+         *
+         */
         if (success) {
             if (obj == NULL) {
                 __redisReaderSetErrorOOM(r);
@@ -591,7 +600,7 @@ static int processAggregateItem(redisReader *r) {
 
             /* Modify task stack when there are more than 0 elements. */
             // 如果是一个数组,元素数量大于0,则初始化一个 redisReadTask
-            // 令 idx =0, redisReaderGetReply 中 该值大于0 就会一直读
+            // 令 ridx =0, redisReaderGetReply 中 该值大于0 就会一直读
             if (elements > 0) {
                 cur->elements = elements;
                 cur->obj = obj;
@@ -600,7 +609,7 @@ static int processAggregateItem(redisReader *r) {
                 r->task[r->ridx]->elements = -1;
                 r->task[r->ridx]->idx = 0;
                 r->task[r->ridx]->obj = NULL;
-                r->task[r->ridx]->parent = cur;
+                r->task[r->ridx]->parent = cur; // 如果是一个一维数组, cur 存储了 type,elements,obj (ArrayObject)
                 r->task[r->ridx]->privdata = r->privdata;
             } else {
                 moveToNextTask(r);
@@ -799,7 +808,7 @@ int redisReaderGetReply(redisReader *r, void **reply) {
     if (r->len == 0)
         return REDIS_OK;
 
-    /* Set first item to process when the stack is empty. */
+    /* Set first item to process when the stack is empty.     // redisContext 初始化时, redisReaderCreateWithFunctions 会初始化 r->tasks 为 9 */
     if (r->ridx == -1) {
         r->task[0]->type = -1;
         r->task[0]->elements = -1;

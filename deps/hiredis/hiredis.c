@@ -157,14 +157,15 @@ static void *createStringObject(const redisReadTask *task, char *str, size_t len
         r->len = len;
     }
     r->str = buf; // 设置 reply 的内容
-
+    // 如果返回的是一个 array 类型, 元素有字符串, parent 类型就是数组
+    // 所以这种情况下数据是存储在 parent 中, 而返回的 r 不一定会使用
     if (task->parent) {
         parent = task->parent->obj;
         assert(parent->type == REDIS_REPLY_ARRAY ||
                parent->type == REDIS_REPLY_MAP ||
                parent->type == REDIS_REPLY_SET ||
                parent->type == REDIS_REPLY_PUSH);
-        parent->element[task->idx] = r;
+        parent->element[task->idx] = r; // 数组的第 idx 个元素是 StringObject
     }
     return r;
 
@@ -310,7 +311,10 @@ static uint32_t countDigits(uint64_t v) {
   }
 }
 
-/* Helper that calculates the bulk length given a certain string length. */
+/* Helper that calculates the bulk length given a certain string length.
+ * "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"
+ * 一个参数就是一个 bucket ,如 foo
+ */
 static size_t bulklen(size_t len) {
     return 1+countDigits(len)+2+len+2;
 }
@@ -525,6 +529,9 @@ int redisvFormatCommand(char **target, const char *format, va_list ap) {
     // 构造 RESP 格式的字符串到 cmd 如 1\r\n$4\r\nPING\r\n
     pos = sprintf(cmd,"*%d\r\n",argc);
     for (j = 0; j < argc; j++) {
+        // %z 是 C99 标准引入的长度修饰符，用于 size_t 类型
+        // u 表示无符号十进制整数 (unsigned)
+        // %zu 组合起来就是专门用于打印 size_t 类型的格式符
         pos += sprintf(cmd+pos,"$%zu\r\n",hi_sdslen(curargv[j]));
         memcpy(cmd+pos,curargv[j],hi_sdslen(curargv[j]));
         pos += hi_sdslen(curargv[j]);
@@ -608,6 +615,7 @@ long long redisFormatSdsCommandArgv(hisds *target, int argc, const char **argv,
     totlen = 1+countDigits(argc)+2;
     for (j = 0; j < argc; j++) {
         len = argvlen ? argvlen[j] : strlen(argv[j]);
+
         totlen += bulklen(len);
     }
 
@@ -1110,7 +1118,7 @@ int redisGetReply(redisContext *c, void **reply) {
     if (aux == NULL && c->flags & REDIS_BLOCK) {
         /* Write until done */
         do {
-            // 发生命令到服务端
+            // 发送命令到服务端
             if (redisBufferWrite(c,&wdone) == REDIS_ERR)
                 return REDIS_ERR;
         } while (!wdone);

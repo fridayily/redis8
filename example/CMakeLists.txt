@@ -1,6 +1,8 @@
 # CMakeLists.txt for Redis C examples
 cmake_minimum_required(VERSION 3.15)
 
+set(ENV{REDIS_SERVER} "${CMAKE_CURRENT_BINARY_DIR}/redis-server")
+
 # 设置包含目录
 set(REDIS_SRC ..)
 include_directories(${REDIS_SRC}/src)

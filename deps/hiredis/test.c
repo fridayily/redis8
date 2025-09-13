@@ -288,6 +288,7 @@ static void test_format_commands(void) {
     hi_free(cmd);
 
     test("Format command with %%b string interpolation: ");
+    // "b\0r" 是3个字符, 这里通过长度获取这3个字符
     len = redisFormatCommand(&cmd,"SET %b %b","foo",(size_t)3,"b\0r",(size_t)3);
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nb\0r\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(3+2)+4+(3+2));
@@ -327,6 +328,14 @@ static void test_format_commands(void) {
 } while(0)
 
     INTEGER_WIDTH_TEST("d", int);
+    // 等价于
+    // 相邻的字符串字面量会被自动连接成一个字符串
+    // "key:%08" "d" " str:%s" 等价于  "key:%08d str:%s"
+    len = redisFormatCommand(&cmd, "key:%08" "d" " str:%s", 123, "hello");
+    test_cond(strncmp(cmd,"*2\r\n$12\r\nkey:00000123\r\n$9\r\nstr:hello\r\n",len) == 0 && \
+    len == 4+5+(12+2)+4+(9+2));
+    hi_free(cmd);
+
     INTEGER_WIDTH_TEST("hhd", char);
     INTEGER_WIDTH_TEST("hd", short);
     INTEGER_WIDTH_TEST("ld", long);
@@ -929,7 +938,10 @@ static void test_blocking_connection_errors(void) {
     redisFree(c);
 
 
-    /* Verify we don't regress from the fix in PR #1180 */
+    /* Verify we don't regress from the fix in PR #1180
+     * "clobber"通常表示覆盖、破坏或擦除已有数据或状态的行为。
+     * 不要用setsockopt错误覆盖连接异常
+     */
     test("We don't clobber connection exception with setsockopt error: ");
     tv = (struct timeval){.tv_sec = 0, .tv_usec = 500000};
     opt.command_timeout = opt.connect_timeout = &tv;

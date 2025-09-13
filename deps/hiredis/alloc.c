@@ -44,7 +44,7 @@ hiredisAllocFuncs hiredisAllocFns = {
 };
 
 /* Override hiredis' allocators with ones supplied by the user */
-hiredisAllocFuncs hiredisSetAllocators(hiredisAllocFuncs *override) {
+hiredisAllocFuncs  hiredisSetAllocators(hiredisAllocFuncs *override) {
     hiredisAllocFuncs orig = hiredisAllocFns;
 
     hiredisAllocFns = *override;

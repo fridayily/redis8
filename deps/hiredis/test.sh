@@ -1,6 +1,9 @@
 #!/bin/sh -ue
 
+# 如果环境变量 REDIS_SERVER 已经设置且非空，则使用该变量的值, 否则使用 redis-server
+REDIS_SERVER= /Users/odyssey/ClionProjects/redis8/cmake-build-debug/redis-server
 REDIS_SERVER=${REDIS_SERVER:-redis-server}
+echo "REDIS_SERVER: ${REDIS_SERVER}"
 REDIS_PORT=${REDIS_PORT:-56379}
 REDIS_SSL_PORT=${REDIS_SSL_PORT:-56443}
 TEST_SSL=${TEST_SSL:-0}
