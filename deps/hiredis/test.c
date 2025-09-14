@@ -1376,6 +1376,9 @@ static void test_blocking_io_errors(struct config config) {
     test("Returns I/O error on socket timeout: ");
     struct timeval tv = { 0, 1000 };
     assert(redisSetTimeout(c,tv) == REDIS_OK);
+    // 这里没有设置命令,即没有向服务端发送命令
+    // redisNetRead 中 recv(c->fd, buf, bufcap, 0) 返回 -1
+    // 即返回 REDIS_ERR
     int respcode = redisGetReply(c,&_reply);
 #ifndef _WIN32
     test_cond(respcode == REDIS_ERR && c->err == REDIS_ERR_IO && errno == EAGAIN);
@@ -1394,6 +1397,7 @@ static void test_invalid_timeout_errors(struct config config) {
     config.connect_timeout.tv_usec = 10000001;
 
     if (config.type == CONN_TCP || config.type == CONN_SSL) {
+        // redisContextTimeoutMsec 要求 timeout->tv_usec <= 1000000
         c = redisConnectWithTimeout(config.tcp.host, config.tcp.port, config.connect_timeout);
     } else if(config.type == CONN_UNIX) {
         c = redisConnectUnixWithTimeout(config.unix_sock.path, config.connect_timeout);
@@ -1458,6 +1462,7 @@ static void test_throughput(struct config config) {
     replies = hi_malloc_safe(sizeof(redisReply*)*num);
     t1 = usec();
     for (i = 0; i < num; i++) {
+        // 返回 mylist 列表中从第一个元素到第 500 个元素的所有元素。
         replies[i] = redisCommand(c,"LRANGE mylist 0 499");
         assert(replies[i] != NULL && replies[i]->type == REDIS_REPLY_ARRAY);
         assert(replies[i] != NULL && replies[i]->elements == 500);

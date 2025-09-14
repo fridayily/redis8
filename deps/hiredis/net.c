@@ -60,6 +60,7 @@ void redisNetClose(redisContext *c) {
 }
 
 ssize_t redisNetRead(redisContext *c, char *buf, size_t bufcap) {
+    // redisContextSetTimeout 中有设置 c->fd 的超时行为
     ssize_t nread = recv(c->fd, buf, bufcap, 0);
     if (nread == -1) {
         // EWOULDBLOCK 表示操作会阻塞，但套接字被设置为非阻塞模式，因此操作无法立即完成。
@@ -378,10 +379,14 @@ int redisContextSetTimeout(redisContext *c, const struct timeval tv) {
         __redisSetError(c, REDIS_ERR_OOM, "Out of memory");
         return REDIS_ERR;
     }
+
+    // SO_RCVTIMEO (Receive Timeout) 设置接收数据操作的超时时间
     if (setsockopt(c->fd,SOL_SOCKET,SO_RCVTIMEO,to_ptr,to_sz) == -1) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,"setsockopt(SO_RCVTIMEO)");
         return REDIS_ERR;
     }
+
+    // SO_SNDTIMEO (Send Timeout) 作用：设置发送数据操作的超时时间
     if (setsockopt(c->fd,SOL_SOCKET,SO_SNDTIMEO,to_ptr,to_sz) == -1) {
         __redisSetErrorFromErrno(c,REDIS_ERR_IO,"setsockopt(SO_SNDTIMEO)");
         return REDIS_ERR;
