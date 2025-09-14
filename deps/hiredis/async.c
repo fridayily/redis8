@@ -259,6 +259,8 @@ redisAsyncSetConnectCallbackImpl(redisAsyncContext *ac, redisConnectCallback *fn
     // }
     // while (0);
 
+    // addWrite 可以是 redisAeAddWrite (redisAeAttach 中设置)
+
     return REDIS_OK;
 }
 
