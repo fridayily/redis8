@@ -1095,7 +1095,7 @@ static int redisNextInBandReplyFromReader(redisContext *c, void **reply) {
         if (redisGetReplyFromReader(c, reply) == REDIS_ERR)
             return REDIS_ERR;
     } while (redisHandledPushReply(c, *reply));
-    // redisHandledPushReply 若reply是 Push 类型的消息, 则可以继续循环
+    // redisHandledPushReply 若 reply 是 Push 类型的消息, 则可以继续循环, 默认是调用 redisPushAutoFree 将 reply 释放掉
     return REDIS_OK;
 }
 
@@ -1110,6 +1110,16 @@ int redisGetReply(redisContext *c, void **reply) {
      * 每次调用 redisGetReply 获取一个结果
      * 第二次调用 redisGetReply 从缓存中获取结果,不需要访问服务端
      * 数据会写到 aux, aux!=NULL ,会直接返回
+     *
+     * 如果执行
+     *      HELLO 3
+     *      CLIENT TRACKING ON
+     *      GET mykey   返回 nil
+     *      SET key:0 val:0  返回  "+OK\r\n>2\r\n$10\r\invalidate\r\n*1\r\n$5\r\nkey:0\r\n"
+     *          reply 中只会解析消息 ok, 剩余的 PUSH 消息等待下次执行命令是处理
+     *      如果在再执行 GET key:0 且没有设置对应的 push_cb (push 回调函数)
+     *      则 redisNextInBandReplyFromReader 会解析剩余的 PUSH 消息,并调用 redisPushAutoFree 将解析出来的消息销毁
+     *      然后开始执行命令
      */
     if (redisNextInBandReplyFromReader(c,&aux) == REDIS_ERR)
         return REDIS_ERR;

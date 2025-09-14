@@ -170,6 +170,15 @@ static void send_hello(redisContext *c, int version) {
 
     reply = redisCommand(c, "HELLO %d", version);
     expected = version == 3 ? REDIS_REPLY_MAP : REDIS_REPLY_ARRAY;
+    // 返回的是 REDIS_REPLY_MAP, reply->elements = 14
+    // 在客户端 HELLO 3 会有如下打印, 是redis-cli 有对 reply 进行格式化
+    //     1# "server" => "redis"
+    //     2# "version" => "8.0.3"
+    //     3# "proto" => (integer) 3
+    //     4# "id" => (integer) 51
+    //     5# "mode" => "standalone"
+    //     6# "role" => "master"
+    //     7# "modules" => (empty array)
     assert(reply != NULL && reply->type == expected);
     freeReplyObject(reply);
 }
@@ -992,7 +1001,9 @@ static void test_resp3_push_handler(redisContext *c) {
     void *privdata;
 
     /* Switch to RESP3 and turn on client tracking */
+    // 切换到RESP3协议
     send_hello(c, 3);
+    // 启用客户端跟踪功能
     send_client_tracking(c, "ON");
     privdata = c->privdata;
     c->privdata = &pc;
@@ -1002,13 +1013,14 @@ static void test_resp3_push_handler(redisContext *c) {
     freeReplyObject(reply);
 
     test("RESP3 PUSH messages are handled out of band by default: ");
-    reply = redisCommand(c, "SET key:0 val:0");
+    reply = redisCommand(c, "SET key:0 val:0"); // "+OK\r\n>2\r\n$10\r\invalidate\r\n*1\r\n$5\r\nkey:0\r\n"
     test_cond(reply != NULL && reply->type == REDIS_REPLY_STATUS);
     freeReplyObject(reply);
 
     assert((reply = redisCommand(c, "GET key:0")) != NULL);
     freeReplyObject(reply);
 
+    // 设置自定义PUSH回调
     old = redisSetPushCallback(c, push_handler);
     test("We can set a custom RESP3 PUSH handler: ");
     reply = redisCommand(c, "SET key:0 val:0");
@@ -1021,16 +1033,32 @@ static void test_resp3_push_handler(redisContext *c) {
     freeReplyObject(reply);
 
     test("We properly handle a NIL invalidation payload: ");
+    // 清空当前数据库的所有键值对, 触发NIL类型无效化消息
+    // 执行 FLUSHDB 时, 服务端返回的是 PUSH 消息 + ok 消息
+    // PUSH 消息由于 pusb_cb 的设置, 将pc->nil 设置为1
     reply = redisCommand(c, "FLUSHDB");
     assert(reply != NULL);
     freeReplyObject(reply);
+    // 这里是真正的执行了 ping, 并没有 PUSH 消息需要解析
     reply = redisCommand(c, "PING");
     test_cond(reply != NULL && reply->type == REDIS_REPLY_STATUS && pc.nil == 1);
     freeReplyObject(reply);
 
+
+    // In-band vs Out-of-band
+    // In-band（带内）：
+    //      消息通过正常的命令响应通道传输
+    //      PUSH 消息作为命令的响应一起返回
+    //      客户端需要主动读取才能获取这些消息
+    // Out-of-band（带外）：
+    //      消息通过独立的异步通道传输
+    //      PUSH 消息可以随时到达，不需要与特定命令关联
+    //      通过专门的回调机制处理
+
     /* Unset the push callback and generate an invalidate message making
      * sure it is not handled out of band. */
     test("With no handler, PUSH replies come in-band: ");
+    // 取消PUSH回调
     redisSetPushCallback(c, NULL);
     assert((reply = redisCommand(c, "GET key:0")) != NULL);
     freeReplyObject(reply);
@@ -1039,12 +1067,15 @@ static void test_resp3_push_handler(redisContext *c) {
      * status reply. Both cases are valid. */
     if (reply->type == REDIS_REPLY_STATUS) {
         freeReplyObject(reply);
+        // 这里没有发送 PING 命令,而是返回上个命令服务端返回的 PUSH 消息
         reply = redisCommand(c, "PING");
     }
+    // 取的缓存中的 PUSH 消息,没有与服务端交互,故返回类型是 REDIS_REPLY_PUSH
     test_cond(reply->type == REDIS_REPLY_PUSH);
     freeReplyObject(reply);
 
     test("With no PUSH handler, no replies are lost: ");
+    // 这里是真的发送 PING 命令
     assert(redisGetReply(c, (void**)&reply) == REDIS_OK);
     test_cond(reply != NULL && reply->type == REDIS_REPLY_STATUS);
     freeReplyObject(reply);
@@ -1185,7 +1216,10 @@ static void test_blocking_connection(struct config config) {
     freeReplyObject(reply);
 
     /* m/e with multi bulk reply *before* other reply.
-     * specifically test ordering of reply items to parse. */
+     * specifically test ordering of reply items to parse.
+     * MULTI 命令用于标记一个事务块的开始。在执行 MULTI 之后，客户端可以发送多个命令，
+     * 这些命令不会立即执行，而是被放入队列中，直到执行 EXEC 命令时才会按顺序一次性执行
+     */
     test("Can handle nested multi bulk replies: ");
     freeReplyObject(redisCommand(c,"MULTI"));
     freeReplyObject(redisCommand(c,"LRANGE mylist 0 -1"));
@@ -2274,7 +2308,7 @@ static void test_async_polling(struct config config) {
     test_cond(astest.pongs == 1);
 }
 /* End of Async polling_adapter driven tests */
-
+// ./redis-cli -h 127.0.0.1 -p 6379 -n 9 FLUSHDB
 int main(int argc, char **argv) {
     struct config cfg = {
         .tcp = {

@@ -271,17 +271,25 @@ static void moveToNextTask(redisReader *r) {
     while (r->ridx >= 0) {
         /* Return a.s.a.p. when the stack is now empty. */
         if (r->ridx == 0) {
+            // 栈空,解析完成
             r->ridx--;
             return;
         }
 
         cur = r->task[r->ridx];
-        prv = r->task[r->ridx-1]; // 如果是 Array[StringObject] ,第一次创建了一个StringObject ,准备创建下一个时: prev 是ArrayObject, cur 是 StringObject
+        prv = r->task[r->ridx-1];
+        // 如果是 Array[StringObject], 有10个元素
+        // r->task[0] 是创建 ArrayObject 的 task, 即 prv
+        // r->task[1] 是创建 StringObject 的 task, 即 cur
+        // r->task[1] 负责解析 10 个 StringObject, 放在 ArrayObject 中
+        // 这里只有一级嵌套结构, ridx 在解析完 10 个 StringObject 都是 1
+        // 解析完成后, ridx = 0, 停止解析
         assert(prv->type == REDIS_REPLY_ARRAY ||
                prv->type == REDIS_REPLY_MAP ||
                prv->type == REDIS_REPLY_SET ||
                prv->type == REDIS_REPLY_PUSH);
         if (cur->idx == prv->elements-1) {
+            // 当前层级处理完成，返回上一层
             r->ridx--;
         } else {
             /* Reset the type because the next item can be anything */
@@ -406,6 +414,7 @@ static int processLineItem(redisReader *r) {
             }
             if (r->fn && r->fn->createString)
                 // 可以是 createStringObject 函数, 返回 redisReply 指针
+                // cur 中存有元素的索引信息
                 obj = r->fn->createString(cur,p,len);
             else
                 obj = (void*)(uintptr_t)(cur->type);
@@ -604,7 +613,10 @@ static int processAggregateItem(redisReader *r) {
             if (elements > 0) {
                 cur->elements = elements;
                 cur->obj = obj;
+                // 任务栈的深度+1,即嵌套级数加1
                 r->ridx++;
+                // 初始化新任务
+                // 在 processItem 会取出该任务
                 r->task[r->ridx]->type = -1;
                 r->task[r->ridx]->elements = -1;
                 r->task[r->ridx]->idx = 0;
