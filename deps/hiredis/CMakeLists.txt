@@ -35,7 +35,9 @@ SET(hiredis_sources
     net.c
     read.c
     sds.c
-    sockcompat.c)
+    sockcompat.c
+        hiredis_debug.c
+)
 
 SET(hiredis_sources ${hiredis_sources})
 

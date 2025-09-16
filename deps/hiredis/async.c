@@ -250,7 +250,15 @@ redisAsyncSetConnectCallbackImpl(redisAsyncContext *ac, redisConnectCallback *fn
 
     /* The common way to detect an established connection is to wait for
      * the first write event to be fired. This assumes the related event
-     * library functions are already set. */
+     * library functions are already set.
+     *
+     * 检测连接建立的常见方法是等待第一个写事件被触发。这假设相关的事件库函数已经设置好了
+     * 异步连接的特点：
+     *    连接建立过程是非阻塞的, 不能像同步连接那样立即知道连接是否成功
+     * 检测机制:
+     *    等待第一个写事件（write event）的发生
+     */
+    D("add write fd=%d obuf=%s",ac->c.fd,ac->c.obuf);
     _EL_ADD_WRITE(ac);
     // do
     // {
@@ -259,7 +267,9 @@ redisAsyncSetConnectCallbackImpl(redisAsyncContext *ac, redisConnectCallback *fn
     // }
     // while (0);
 
+    // redisAeAttach 中将 ac->ev.data 赋值为 redisAeEvents, 里面有要监控的 fd
     // addWrite 可以是 redisAeAddWrite (redisAeAttach 中设置)
+    //       该函数通过 aeCreateFileEvent, 注册文件事件, 监控 fd
 
     return REDIS_OK;
 }
@@ -280,7 +290,9 @@ int redisAsyncSetDisconnectCallback(redisAsyncContext *ac, redisDisconnectCallba
     return REDIS_ERR;
 }
 
-/* Helper functions to push/shift callbacks */
+/* Helper functions to push/shift callbacks
+ * 将回调函数添加到链表尾部
+ */
 static int __redisPushCallback(redisCallbackList *list, redisCallback *source) {
     redisCallback *cb;
 
@@ -322,9 +334,14 @@ static int __redisPushCallback(redisCallbackList *list, redisCallback *source) {
  */
 
 static int __redisShiftCallback(redisCallbackList *list, redisCallback *target) {
+    // 取出头部的节点
     redisCallback *cb = list->head;
     if (cb != NULL) {
+        // 修改头指针
         list->head = cb->next;
+        // 如果取出的节点就是最后一个节点, tail 指向 NULL
+        // 如果 cb 是最后一个节点, cb->next = NULL
+        // 执行下面语句后 list->head 和 list->next 都为 NULL
         if (cb == list->tail)
             list->tail = NULL;
 
@@ -604,7 +621,7 @@ void redisProcessCallbacks(redisAsyncContext *ac) {
     redisContext *c = &(ac->c);
     void *reply = NULL;
     int status;
-
+    // 现在 redisAsyncRead 读取服务端返回的数据后, 保存到 c->reader->buf 中
     while((status = redisGetReply(c,&reply)) == REDIS_OK) {
         if (reply == NULL) {
             /* When the connection is being disconnected and there are
@@ -663,7 +680,7 @@ void redisProcessCallbacks(redisAsyncContext *ac) {
             if (c->flags & REDIS_SUBSCRIBED)
                 __redisGetSubscribeCallback(ac,reply,&cb);
         }
-
+        D("reply:%s",((redisReply*)reply)->str);
         if (cb.fn != NULL) {
             __redisRunCallback(ac,&cb,reply);
             if (!(c->flags & REDIS_NO_AUTO_FREE_REPLIES)){
@@ -756,6 +773,8 @@ void redisAsyncRead(redisAsyncContext *ac) {
  */
 void redisAsyncHandleRead(redisAsyncContext *ac) {
     redisContext *c = &(ac->c);
+    D_CMD("read cmd",c);
+
     /* must not be called from a callback */
     assert(!(c->flags & REDIS_IN_CALLBACK));
 
@@ -776,13 +795,18 @@ void redisAsyncWrite(redisAsyncContext *ac) {
     redisContext *c = &(ac->c);
     int done = 0;
 
+    // 调用 redisBufferWrite 将输出缓冲区中的数据写入套接字
     if (redisBufferWrite(c,&done) == REDIS_ERR) {
+        // 写入失败，调用 __redisAsyncDisconnect 断开连接
         __redisAsyncDisconnect(ac);
     } else {
-        /* Continue writing when not done, stop writing otherwise */
+        /* Continue writing when not done, stop writing otherwise
+         * 如果没写完，继续注册写事件
+         */
         if (!done)
             _EL_ADD_WRITE(ac);
         else
+            // 如果写完了，取消写事件监听
             _EL_DEL_WRITE(ac);
 
         /* Always schedule reads after writes */
@@ -790,8 +814,11 @@ void redisAsyncWrite(redisAsyncContext *ac) {
     }
 }
 
+//
 void redisAsyncHandleWrite(redisAsyncContext *ac) {
     redisContext *c = &(ac->c);
+    D_CMD("write cmd",c);
+
     /* must not be called from a callback */
     assert(!(c->flags & REDIS_IN_CALLBACK));
 
@@ -804,6 +831,8 @@ void redisAsyncHandleWrite(redisAsyncContext *ac) {
             return;
     }
 
+    // redisContextDefaultFuncs 中初始化 redisContextDefaultFuncs
+    // redisContext->funcs(redisContextFuncs)->async_write(redisAsyncWrite)
     c->funcs->async_write(ac);
 }
 
@@ -910,6 +939,7 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
     if (c->flags & (REDIS_DISCONNECTING | REDIS_FREEING)) return REDIS_ERR;
 
     /* Setup callback */
+    // 这里设置的是命令执行成功后的回调函数
     cb.fn = fn;
     cb.privdata = privdata;
     cb.pending_subs = 1;
@@ -1016,6 +1046,8 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
             if (__redisPushCallback(&ac->sub.replies,&cb) != REDIS_OK)
                 goto oom;
         } else {
+            // 每个命令都有自己的回调函数, 回调函数可能为空
+            // 这些回调函数形成一个链表
             if (__redisPushCallback(&ac->replies,&cb) != REDIS_OK)
                 goto oom;
         }
@@ -1034,6 +1066,10 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
     // }
     // while (0);
 
+    // redisAeAttach 中将 ac->ev.data 赋值为 redisAeEvents, 里面有要监控的 fd
+    // addWrite 可以是 redisAeAddWrite (redisAeAttach 中设置)
+    //       该函数通过 aeCreateFileEvent, 注册文件事件, 监控 fd
+
     return REDIS_OK;
 oom:
     __redisSetError(&(ac->c), REDIS_ERR_OOM, "Out of memory");
@@ -1050,7 +1086,7 @@ int redisvAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void *privdat
     /* We don't want to pass -1 or -2 to future functions as a length. */
     if (len < 0)
         return REDIS_ERR;
-
+    D("AsyncCommand format %s",format);
     status = __redisAsyncCommand(ac,fn,privdata,cmd,len);
     hi_free(cmd);
     return status;

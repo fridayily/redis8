@@ -23,4 +23,10 @@
         fclose(fp);                                                          \
     } while (0)
 
+#define D_CONSOLE(...) do { \
+fprintf(stderr, "%s:%d: ", __func__, __LINE__); \
+fprintf(stderr, __VA_ARGS__); \
+fprintf(stderr, "\n"); \
+} while(0)
+
 #endif /* _REDIS_DEBUGMACRO_H_ */

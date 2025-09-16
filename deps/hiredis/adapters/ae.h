@@ -35,6 +35,7 @@
 #include "../hiredis.h"
 #include "../async.h"
 
+
 typedef struct redisAeEvents {
     redisAsyncContext *context;
     aeEventLoop *loop;
@@ -75,8 +76,11 @@ static void redisAeDelRead(void *privdata) {
     }
 }
 
+// __redisAppendCommand 将命令写道 redisContext->obuf 中
+// 即 redisAeEvents->redisAsyncContext->redisContext->obuf 中
 static void redisAeAddWrite(void *privdata) {
     redisAeEvents *e = (redisAeEvents*)privdata;
+    D("addWrite fd=%d",e->context->c.fd);
     aeEventLoop *loop = e->loop;
     if (!e->writing) {
         e->writing = 1;

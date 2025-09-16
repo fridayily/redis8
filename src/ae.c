@@ -26,6 +26,7 @@
 
 #include "zmalloc.h"
 #include "config.h"
+#include "debugmacro.h"
 
 /* Include the best multiplexing layer supported by this system.
  * The following should be ordered by performances, descending. */
@@ -182,15 +183,21 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
     }
 
     // 获取对应文件描述符的事件结构
+    D_CONSOLE("eventLoop->events[%d]",fd);
+    // redisAeEvents 是在客户端定义的结构体, ae.c 是服务端代码
+    // 所以 clientData 代码无法转换为 redisAeEvents, clientData 是客户端产生的数据
+    // ((redisAeEvents*)clientData)->context->c.obuf
     aeFileEvent *fe = &eventLoop->events[fd];
     // 调用底层API（如epoll、kqueue等）注册事件
     if (aeApiAddEvent(eventLoop, fd, mask) == -1)
         return AE_ERR;
     fe->mask |= mask;
-    // 根据事件类型设置相应的处理函数
+    // 根据事件类型设置相应的处理函数,这里不会执行
+    // aeProcessEvents 中根据触发的事件类型执行
     if (mask & AE_READABLE) fe->rfileProc = proc;
     if (mask & AE_WRITABLE) fe->wfileProc = proc;
     // 保存用户数据
+    // clientData 即 redisAeEvents
     fe->clientData = clientData;
     // 更新事件循环中最大的文件描述符，用于优化事件轮询
     if (fd > eventLoop->maxfd)
@@ -442,6 +449,8 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  */
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
+    D_CONSOLE("aeProcessEvents");
+
     int processed = 0, numevents;
 
     /* Nothing to do? return ASAP  (As Soon As Possible) */
@@ -507,6 +516,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             eventLoop->aftersleep(eventLoop);
 
         // 处理已触发的文件事件
+        D_CONSOLE("%d events need process",numevents);
         for (j = 0; j < numevents; j++) {
             int fd = eventLoop->fired[j].fd;
             // 从已就绪数组中获取事件
@@ -605,6 +615,7 @@ int aeWait(int fd, int mask, long long milliseconds) {
 }
 
 void aeMain(aeEventLoop *eventLoop) {
+    D_CONSOLE("aeMain");
     eventLoop->stop = 0;
     while (!eventLoop->stop) {
         aeProcessEvents(eventLoop, AE_ALL_EVENTS|

@@ -1038,7 +1038,8 @@ int redisBufferWrite(redisContext *c, int *done) {
         return REDIS_ERR;
     // c->buf 存储的是格式化的命令(RESP) 如 1\r\n$4\r\nPING\r\n
     if (hi_sdslen(c->obuf) > 0) {
-        ssize_t nwritten = c->funcs->write(c); // redisNetWrite
+        // c->funcs->write = redisNetWrite
+        ssize_t nwritten = c->funcs->write(c);
         if (nwritten < 0) {
             return REDIS_ERR;
         } else if (nwritten > 0) {
