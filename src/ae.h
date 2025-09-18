@@ -85,6 +85,11 @@ typedef struct aeEventLoop {
     aeFiredEvent *fired; /* Fired events */
     aeTimeEvent *timeEventHead;
     int stop;
+    /*
+     * apidata 字段用于存储特定于底层轮询API的数据结构。
+     * Redis的事件循环支持多种I/O多路复用技术，每种技术需要不同的数据结构
+     * 如 aeApiState 在 epoll 和 kqueue 定义不同
+     */
     void *apidata; /* This is used for polling API specific data */
     aeBeforeSleepProc *beforesleep;
     aeBeforeSleepProc *aftersleep;
@@ -101,6 +106,22 @@ typedef struct aeEventLoop {
               ^                  ^                  ^
               |                  |                  |
             events[0]          events[1]          events[2]
+
+ 布局的另外一种画法
+┌─────────────┐
+│   events    │───┐ 指向连续的结构体数组
+└─────────────┘   │
+                  ▼
+            连续的结构体数组 (一次性分配):
+            ┌──────────────────┐
+            │ events[0]        │ (aeFileEvent for fd=0)
+            ├──────────────────┤
+            │ events[1]        │ (aeFileEvent for fd=1)
+            ├──────────────────┤
+            │ events[2]        │ (aeFileEvent for fd=2)
+            ├──────────────────┤
+            │      ...         │
+            └──────────────────┘
  */
 
 /* Prototypes */

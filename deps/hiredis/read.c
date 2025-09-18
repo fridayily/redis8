@@ -719,7 +719,7 @@ static int processItem(redisReader *r) {
 //  在 创建 redisContext 时初始化
 redisReader *redisReaderCreateWithFunctions(redisReplyObjectFunctions *fn) {
     redisReader *r;
-
+    // 这里将分配的空间初始化为 0, 所以 r->tasks = 0
     r = hi_calloc(1,sizeof(redisReader));
     if (r == NULL)
         return NULL;
@@ -728,16 +728,19 @@ redisReader *redisReaderCreateWithFunctions(redisReplyObjectFunctions *fn) {
     if (r->buf == NULL)
         goto oom;
 
+    // sizeof(*r->task) = 8
     r->task = hi_calloc(REDIS_READER_STACK_SIZE, sizeof(*r->task));
     if (r->task == NULL)
         goto oom;
 
+    // sizeof(**r->task) = 48
     for (; r->tasks < REDIS_READER_STACK_SIZE; r->tasks++) {
         r->task[r->tasks] = hi_calloc(1, sizeof(**r->task));
         if (r->task[r->tasks] == NULL)
             goto oom;
     }
 
+    // defaultFunctions, 解析服务端返回的对象 createStringObject
     r->fn = fn;
     r->maxbuf = REDIS_READER_MAX_BUF;
     r->maxelements = REDIS_READER_MAX_ARRAY_ELEMENTS;
@@ -748,6 +751,31 @@ oom:
     redisReaderFree(r);
     return NULL;
 }
+/*
+ *
+┌─────────────┐
+│   task      │───┐ 指向指针数组
+└─────────────┘   │
+                  ▼
+            指针数组 (动态分配):
+            ┌─────────────┐    指向实际的 redisReadTask 对象
+            │ task[0]     │──────────────────────────────────────┐
+            ├─────────────┤                                      │
+            │ task[1]     │─────────────────────┐                │
+            ├─────────────┤                     │                │
+            │ task[2]     │───┐                 │                │
+            ├─────────────┤   │                 │                │
+            │    ...      │   │                 │                │
+            └─────────────┘   │                 │                │
+                              ▼                 ▼                ▼
+                        ┌─────────────┐  ┌─────────────┐ ┌─────────────┐
+                        │ Task 2      │  │ Task 1      │ │ Task 0      │
+                        └─────────────┘  └─────────────┘ └─────────────┘
+ task 是一个指向指针数组的指针
+ *
+ *
+ */
+
 
 void redisReaderFree(redisReader *r) {
     if (r == NULL)

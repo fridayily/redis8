@@ -64,6 +64,8 @@ static inline void resetEventMask(char *eventsMask, int fd) {
 }
 
 // 初始化 kqueue 实例
+// 初始化 aeApiState, 其中中保存了 kevent 实例, events 数组等
+// 然后赋值给 eventLoop
 static int aeApiCreate(aeEventLoop *eventLoop) {
     aeApiState *state = zmalloc(sizeof(aeApiState));
 

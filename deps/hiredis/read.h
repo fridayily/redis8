@@ -112,6 +112,9 @@ typedef struct redisReader {
     void *privdata;
 } redisReader;
 
+
+
+
 /* Public API for the protocol parser. */
 redisReader *redisReaderCreateWithFunctions(redisReplyObjectFunctions *fn);
 void redisReaderFree(redisReader *r);

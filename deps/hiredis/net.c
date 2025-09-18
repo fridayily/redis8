@@ -395,7 +395,10 @@ int redisContextSetTimeout(redisContext *c, const struct timeval tv) {
 }
 
 int redisContextUpdateConnectTimeout(redisContext *c, const struct timeval *timeout) {
-    /* Same timeval struct, short circuit */
+    /* Same timeval struct, short circuit
+     * 如果指针相同,直接返回
+     * 和 _redisContextConnectTcp 中 (c->tcp.host != addr) 的原理相同
+     */
     if (c->connect_timeout == timeout)
         return REDIS_OK;
 
@@ -451,8 +454,12 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
      * We also carefully check we don't free data we already own,
      * as in the case of the reconnect method.
      *
-     * This is a bit ugly, but atleast it works and doesn't leak memory.
-     **/
+     * This is a bit ugly, but at least it works and doesn't leak memory.
+     *
+     * 如果用 redisReconnect(c) 进行重连, 传入的 *addr 参数就是 c->tcp.host
+     * 这时 c->tcp.host 和 *addr 地址是相同的
+     * c->tcp.host != addr 避免释放 c->tcp.host
+     */
     if (c->tcp.host != addr) {
         hi_free(c->tcp.host);
 
@@ -562,7 +569,11 @@ addrretry:
             }
         }
 
-        /* For repeat connection */
+        /* For repeat connection
+         * 如果是重新连接 c->saddr 指向已分配的内存空间, 所以需要先释放
+         * p->ai_addrlen 是 getaddrinfo 新解析出来的,地址可能与重新连接之前的不同
+         * 所以要用新地址
+         */
         hi_free(c->saddr);
         c->saddr = hi_malloc(p->ai_addrlen);
         if (c->saddr == NULL)
