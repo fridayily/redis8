@@ -376,9 +376,10 @@ static void __redisRunConnectCallback(redisAsyncContext *ac, int status)
     if (ac->onConnect == NULL && ac->onConnectNC == NULL)
         return;
 
+    // 为什么需要 REDIS_IN_CALLBACK 这么设置,没看懂
     if (!(ac->c.flags & REDIS_IN_CALLBACK)) {
         ac->c.flags |= REDIS_IN_CALLBACK;
-        if (ac->onConnect) {
+        if (ac->onConnect) { //  example-ae.c 中的 connectCallback
             ac->onConnect(ac, status);
         } else {
             ac->onConnectNC(ac, status);
@@ -821,7 +822,7 @@ void redisAsyncHandleWrite(redisAsyncContext *ac) {
 
     /* must not be called from a callback */
     assert(!(c->flags & REDIS_IN_CALLBACK));
-
+    // 第一次写事件发生时, c->flags 的 REDIS_CONNECTED 处于断开状态, 需要连接
     if (!(c->flags & REDIS_CONNECTED)) {
         /* Abort connect was not successful. */
         if (__redisAsyncHandleConnect(ac) != REDIS_OK)

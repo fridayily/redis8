@@ -227,6 +227,33 @@ int redisKeepAlive(redisContext *c, int interval) {
     return REDIS_OK;
 }
 
+/*
+ * TCP 默认启用 Nagle 算法，旨在减少小数据包的数量：
+ Nagle 算法的工作原理：
+ 1. 如果有未确认的数据包，小数据包会被缓存
+ 2. 只有收到 ACK 后才发送缓存的数据
+ 3. 或者当缓存数据达到 MSS（最大段大小）时发送
+
+ 问题场景：
+    应用程序发送多个小数据包：
+    send(fd, "H", 1, 0);     // 第1个字节
+    send(fd, "E", 1, 0);     // 第2个字节
+    send(fd, "L", 1, 0);     // 第3个字节
+    send(fd, "L", 1, 0);     // 第4个字节
+    send(fd, "O", 1, 0);     // 第5个字节
+
+  Nagle 算法可能导致：
+  - 第一个字节 "H" 立即发送
+  - 后续字节 "ELLO" 被缓存等待前一个 ACK
+  - 延迟发送直到收到确认或缓存满
+
+  TCP_NODELAY 禁用 Nagle 算法
+  效果：
+  - 立即发送所有数据包，不等待 ACK
+  - 每次 send() 调用都会立即传输数据
+  - 提高实时性，但可能增加网络流量
+ */
+
 int redisSetTcpNoDelay(redisContext *c) {
     int yes = 1;
     if (setsockopt(c->fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == -1) {
@@ -314,6 +341,7 @@ static int redisContextWaitReady(redisContext *c, long msec) {
 }
 
 int redisCheckConnectDone(redisContext *c, int *completed) {
+    // 如果已经连接, rc = -1 ,errno = 56,表示已连接
     int rc = connect(c->fd, (const struct sockaddr *)c->saddr, c->addrlen);
     if (rc == 0) {
         *completed = 1;

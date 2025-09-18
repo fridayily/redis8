@@ -549,9 +549,11 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * 设置了 invert , 先处理事件, 再处理写事件
              */
             if (!invert && fe->mask & mask & AE_READABLE) {
+                // redisAeReadEvent
                 fe->rfileProc(eventLoop,fd,fe->clientData,mask);
                 fired++;
                 // aeCreateFileEvent 可能重新分配 eventLoop->events
+                // 所以这里重新获取 fe
                 fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
             }
 
