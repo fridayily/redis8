@@ -112,6 +112,18 @@ int main() {
         //   |<----------------------|  select() 返回
         //   |                       |
         int activity = select(max_fd + 1, &readfds, NULL, NULL, &tv);
+        /*  int select(int nfds, fd_set *readfds, fd_set *writefds,
+           fd_set *exceptfds, struct timeval * timeout);
+           nfds :委托内核检测的最大文件描述符+1
+           readfds : 内核会检测这个文件描述符集合的读缓冲区
+           writefds : 内核会检测这个文件描述符集合的写缓冲区
+           exceptfds: 内核会检测这个文件描述符集合的异常状态
+           timeout: 超时时间
+           返回值:
+                大于0: 成功,已就绪的文件描述符个数
+                -1: 失败
+                0: 超时,没有检测到就绪文件描述符
+         */
         print_current_time("select end");
         if (activity == -1 && errno != EINTR) {
             perror("select fail");
@@ -119,11 +131,20 @@ int main() {
         }
 
         // select返回后，readfds中只包含就绪的文件描述符
+        // 这里判断 server_fd 是否在 readfds 中,如果在说明有客户端连接请求
         if (FD_ISSET(server_fd, &readfds)) {
             // 接受客户端的连接请求并创建一个新的连接套接字。
 
             print_current_time("Accept called at");
-            // 立即返回
+            /* 立即返回
+             * int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+             * sockfd：监听套接字的文件描述符
+             * addr：指向存储客户端地址信息的缓冲区
+             * addrlen：输入时指定 addr 缓冲区大小，返回时包含实际地址长度
+             *
+             * 连接成功时,会自动填充 client_addr 结构体
+             * 获取通讯协议, 端口号,客户端 IP 地址
+             */
             if ((new_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len)) == -1) {
                 perror("accept fail");
                 continue;
@@ -161,7 +182,14 @@ int main() {
                 ssize_t bytes_read = recv(fd, buffer, BUFFER_SIZE - 1, 0);
 
                 if (bytes_read <= 0) {
-                    // 连接关闭或错误
+                    /*
+                     * int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+                     * sockfd：已连接的套接字文件描述符
+                     * addr：指向存储对端地址信息的缓冲区
+                     * addrlen：输入时指定 addr 缓冲区大小，返回时包含实际地址长度
+                     *
+                     * 这里获取客户端的地址信息存到 client_addr
+                     */
                     getpeername(fd, (struct sockaddr*)&client_addr, &client_len);
                     printf("客户端断开：%s:%d（fd=%d）\n",
                            inet_ntoa(client_addr.sin_addr),

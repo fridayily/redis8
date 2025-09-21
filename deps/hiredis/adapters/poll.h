@@ -14,7 +14,10 @@
 
 /* An adapter to allow manual polling of the async context by checking the state
  * of the underlying file descriptor.  Useful in cases where there is no formal
- * IO event loop but regular ticking can be used, such as in game engines. */
+ * IO event loop but regular ticking can be used, such as in game engines.
+ *
+ * 这个适配器允许开发者手动轮询 Redis 异步上下文，通过检查底层文件描述符的状态来处理 I/O 事件
+ */
 
 typedef struct redisPollEvents {
     redisAsyncContext *context;
