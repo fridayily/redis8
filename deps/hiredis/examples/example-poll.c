@@ -52,7 +52,9 @@ int main (int argc, char **argv) {
     redisPollAttach(c);
     redisAsyncSetConnectCallback(c,connectCallback);
     redisAsyncSetDisconnectCallback(c,disconnectCallback);
-    redisAsyncCommand(c, NULL, NULL, "SET key %b", argv[argc-1], strlen(argv[argc-1]));
+    // redisAsyncCommand(c, NULL, NULL, "SET key %b", argv[argc-1], strlen(argv[argc-1]));
+    redisAsyncCommand(c, NULL, NULL, "SET key %b", "foo", 3);
+
     redisAsyncCommand(c, getCallback, (char*)"end-1", "GET key");
     while (!exit_loop)
     {

@@ -89,7 +89,8 @@ void pushReplyHandler(void *privdata, void *r) {
 
     /* Increment our invalidation count */
     *invalidations += 1;
-
+    // 返回的 PUSH 消息 >2\r\n$10\r\ninvalidate\r\n*1\r\n$5\r\nkey:0\r\n
+    // 消息格式为 ['invalidate',[key:0]]
     printf("pushReplyHandler(): INVALIDATE '%s' (invalidation count: %d)\n",
            reply->element[1]->element[0]->str, *invalidations);
 
@@ -147,6 +148,9 @@ int main(int argc, char **argv) {
     /* Trigger invalidation messages by updating keys we just read */
     for (j = 0; j < KEY_COUNT; j++) {
         printf("            main(): SET key:%d update:%d\n", j, j);
+        // 发送这条命令后,服务端返回 ok + 一个 PUSH 消息
+        // 但本次 reply 只有 ok 消息
+        // 下次发送命令是,会执行  redisNextInBandReplyFromReader 获取缓存的 PUSH  消息,然后执行真正的命令
         reply = redisCommand(c, "SET key:%d update:%d", j, j);
         assertReplyAndFree(c, reply, REDIS_REPLY_STATUS);
         printf("            main(): SET REPLY OK\n");
