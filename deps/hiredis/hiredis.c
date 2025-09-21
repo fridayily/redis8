@@ -1053,6 +1053,8 @@ int redisBufferWrite(redisContext *c, int *done) {
             }
         }
     }
+    // c->obuf 被清空了才设置 done 为 true
+    // 如果 nwritten = 0, 说明读取未完成, 会等到下次再读取
     if (done != NULL) *done = (hi_sdslen(c->obuf) == 0);
     return REDIS_OK;
 

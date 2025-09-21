@@ -76,6 +76,7 @@ static void __redisReaderSetError(redisReader *r, int type, const char *str) {
     r->errstr[len] = '\0';
 }
 
+// 单个字符转换为可读的字符串表示形式,存到 buf 中
 static size_t chrtos(char *buf, size_t size, char byte) {
     size_t len = 0;
 
@@ -100,6 +101,7 @@ static size_t chrtos(char *buf, size_t size, char byte) {
     return len;
 }
 
+// 遇到非法的协议字符
 static void __redisReaderSetErrorProtocolByte(redisReader *r, char byte) {
     char cbuf[8], sbuf[128];
 
@@ -232,6 +234,13 @@ static int string2ll(const char *s, size_t slen, long long *value) {
 
 // 从 reader buf 中消费一行数据
 // 返回行的开始,行的长度写到 _len
+/*
+ * 假设返回 +OK\r\n$3\r\nfoo\r\n
+ * processItem 中已经解析了 '+'
+ * 到这里准备提取 OK 字符
+ * 即 p = OK, s = 第一个 \r\n
+ * len = s-p = 2 即 OK 的长度
+ */
 static char *readLine(redisReader *r, int *_len) {
     char *p, *s;
     int len;
@@ -241,6 +250,8 @@ static char *readLine(redisReader *r, int *_len) {
     // s 是指向返回结果结束的地址,如结果是 PONG\r\n  会指向\r
     if (s != NULL) {
         // 数据的长度
+        // p = r->buf+r->pos; 指向准备解析的字符地址
+        // s 指向下一个行,包含 \r\n
         len = s-(r->buf+r->pos);
         // 数据长度 + \r\n 的长度
         r->pos += len+2; /* skip \r\n */
@@ -302,6 +313,9 @@ static void moveToNextTask(redisReader *r) {
     }
 }
 
+/*
+ * 处理一行 redis 返回的消息
+ */
 static int processLineItem(redisReader *r) {
     redisReadTask *cur = r->task[r->ridx];
     void *obj;
@@ -640,7 +654,9 @@ static int processItem(redisReader *r) {
     redisReadTask *cur = r->task[r->ridx];
     char *p;
     /* check if we need to read type */
-    // cur->type 默认初始化为 -1, 这里的 r 还保留着上次服务端返回的信息,如上次返回的是 PONG\r\n, pos = 7, len = 7, 读取不到数据,返回 REDIS_ERR
+    // cur->type 默认初始化为 -1, 这里的 r 还保留着上次服务端返回的信息
+    // 如上次返回的是 PONG\r\n, pos = 7, len = 7, 读取不到数据,返回 REDIS_ERR
+    // 如果还有数据读取,则继续处理
     if (cur->type < 0) {
         if ((p = readBytes(r,1)) != NULL) {
             switch (p[0]) {
@@ -797,13 +813,24 @@ void redisReaderFree(redisReader *r) {
     hi_free(r);
 }
 
-// buf 是服务端返回的消息, len 是长度
-// 将读取到的消息追加到 redisReader 的 buf 中
-// 即如果第一次发送命令 PING ,返回 +PONG\r\n, 第二次发送命令 set foo hello world ,返回 +OK\r\n
-// 此时 r->buf 保存 +PONG\r\n+OK\r\n
-// 如果还没有读取第二次返回的消息, pos=7, len =12
-//
-// buf 可能保存的是返回多个命令的结果(一次性返回的)
+
+/*
+buf 是服务端返回的消息, len 是长度
+将读取到的消息追加到 redisReader 的 buf 中
+即如果第一次发送命令 PING ,返回 +PONG\r\n, 第二次发送命令 set foo hello world ,返回 +OK\r\n
+此时 r->buf 保存 +PONG\r\n+OK\r\n
+如果还没有读取第二次返回的消息, pos=7, len =12
+
+buf 可能保存的是返回多个命令的结果(一次性返回的)
+
+"Feed" 在这里是一个动词，意思是"喂食"、"供给"，指的是将从 Redis 服务器接收到的原始数据提供给解析器进行处理。
+
+网络层接收数据
+char buffer[1024];
+ssize_t n = recv(socket_fd, buffer, sizeof(buffer), 0);
+
+通过 redisReaderFeed 将接收到的数据写到 redisReader->buf
+ */
 int redisReaderFeed(redisReader *r, const char *buf, size_t len) {
     hisds newbuf;
 
@@ -848,7 +875,8 @@ int redisReaderGetReply(redisReader *r, void **reply) {
     if (r->len == 0)
         return REDIS_OK;
 
-    /* Set first item to process when the stack is empty.     // redisContext 初始化时, redisReaderCreateWithFunctions 会初始化 r->tasks 为 9 */
+    /* Set first item to process when the stack is empty.
+     * redisContext 初始化时, redisReaderCreateWithFunctions 会初始化 r->tasks 为 9 */
     if (r->ridx == -1) {
         r->task[0]->type = -1;
         r->task[0]->elements = -1;
@@ -862,6 +890,8 @@ int redisReaderGetReply(redisReader *r, void **reply) {
     /* Process items in reply. */
     // processItem 处理返回的数据,可能没有数据要处理,则返回 REDIS_ERR, 就执行 break
     D("process item begin ridx=%d,pos=%lu",r->ridx,r->pos);
+    // 如果 Item 读取的是 REDIS_REPLY_ARRAY 类型,则 r->ridx 可能>0
+    // 如果是 REDIS_REPLY_STRING, r->ridx 一直是 0
     while (r->ridx >= 0)
         if (processItem(r) != REDIS_OK)
             break;
@@ -885,6 +915,8 @@ int redisReaderGetReply(redisReader *r, void **reply) {
         } else if (r->reply != NULL && r->fn && r->fn->freeObject) {
             r->fn->freeObject(r->reply);
         }
+        // redisReader 已完成一次读取,将数据写到了 **reply 中
+        // 这里将 redisReader->reply 清空
         r->reply = NULL;
     }
     return REDIS_OK;

@@ -88,6 +88,11 @@ ssize_t redisNetWrite(redisContext *c) {
 
     nwritten = send(c->fd, c->obuf, hi_sdslen(c->obuf), 0);
     if (nwritten < 0) {
+        /*
+         * 如果没有数据可读，recv 返回 -1 并设置 errno = EWOULDBLOCK
+         * 系统调用被中断，返回 -1 并设置 errno = EINTR
+         * 在非阻塞模式下，EWOULDBLOCK 是预期行为
+         */
         if ((errno == EWOULDBLOCK && !(c->flags & REDIS_BLOCK)) || (errno == EINTR)) {
             /* Try again */
             return 0;
@@ -131,6 +136,7 @@ static int redisCreateSocket(redisContext *c, int type) {
         return REDIS_ERR;
     }
     c->fd = s;
+    // IPv4 (AF_INET)
     if (type == AF_INET) {
         if (redisSetReuseAddr(c) == REDIS_ERR) {
             return REDIS_ERR;
