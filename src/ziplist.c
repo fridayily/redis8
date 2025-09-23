@@ -663,9 +663,15 @@ static inline int zipEntrySafe(unsigned char* zl, size_t zlbytes, unsigned char 
     /* If there's no possibility for the header to reach outside the ziplist,
      * take the fast path. (max lensize and prevrawlensize are both 5 bytes) */
     if (p >= zlfirst && p + 10 < zllast) {
+        // prevlensize: prevlen 是 1 字节还是 5 字节表示
+        // prevrawlen: 实际的数据
         ZIP_DECODE_PREVLEN(p, e->prevrawlensize, e->prevrawlen);
+        // encoding 编码类型
         ZIP_ENTRY_ENCODING(p + e->prevrawlensize, e->encoding);
+        // e->lensize 表示 encoding 占用字节数
+        // e->len 实际数据的长度
         ZIP_DECODE_LENGTH(p + e->prevrawlensize, e->encoding, e->lensize, e->len);
+        // headersize: (prevlen + encoding) 占用的字节数
         e->headersize = e->prevrawlensize + e->lensize;
         e->p = p;
         /* We didn't call ZIP_ASSERT_ENCODING, so we check lensize was set to 0. */
