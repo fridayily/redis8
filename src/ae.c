@@ -449,7 +449,7 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  */
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
-    D_CONSOLE("aeProcessEvents");
+    // D_CONSOLE("aeProcessEvents");
 
     int processed = 0, numevents;
 
@@ -516,7 +516,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             eventLoop->aftersleep(eventLoop);
 
         // 处理已触发的文件事件
-        D_CONSOLE("%d events need process",numevents);
+        // D_CONSOLE("%d events need process",numevents);
         for (j = 0; j < numevents; j++) {
             int fd = eventLoop->fired[j].fd;
             // 从已就绪数组中获取事件

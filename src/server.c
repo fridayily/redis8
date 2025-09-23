@@ -7233,6 +7233,10 @@ int main(int argc, char **argv) {
     char config_from_stdin = 0;
 
 #ifdef REDIS_TEST
+    /*
+     * ./redis-server test ziplist 123
+     * 执行上面命令进行测试
+     */
     monotonicInit(); /* Required for dict tests, that are relying on monotime during dict rehashing. */
     if (argc >= 3 && !strcasecmp(argv[1], "test")) {
         int flags = 0;

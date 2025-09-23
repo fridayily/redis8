@@ -74,6 +74,13 @@ set(REDIS_BENCHMARK_LIST
         src/crcspeed.c src/crccombine.c src/crc64.c src/siphash.c src/crc16.c src/monotonic.c src/cli_common.c
         src/mt19937-64.c src/strl.c)
 
+# 如果启用测试，则定义 REDIS_TEST 宏
+set(ENABLE_TESTS ON)
+if(ENABLE_TESTS)
+    message(STATUS "Building with Redis test code")
+    add_definitions(-DREDIS_TEST)
+endif()
+
 #生成可执行文件
 add_executable(redis-server ${REDIS_SERVER_LIST})
 add_executable(redis-benchmark ${REDIS_BENCHMARK_LIST})

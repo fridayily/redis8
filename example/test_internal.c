@@ -18,18 +18,22 @@ int main(int argc, char* argv[])
 {
     UNUSED(argc);
     UNUSED(argv);
+
+
     // sdsTest
-    printf("Starting listpack internal tests...\n");
+    printf("Starting sds internal tests...\n");
     if (sdsTest(argc, argv, 0) == 0)
     {
-        printf("All listpack internal tests passed!\n");
+        printf("All sds internal tests passed!\n");
         return 0;
     }
     else
     {
-        printf("Some listpack internal tests failed!\n");
+        printf("Some sds internal tests failed!\n");
         return 1;
     }
+
+    //
     // printf("Starting listpack internal tests...\n");
     // if (listpackTest(argc, argv, 0) == 0) {
     //     printf("All listpack internal tests passed!\n");
