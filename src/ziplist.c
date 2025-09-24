@@ -825,7 +825,7 @@ unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p) {
 
         /* Update prev entry's info and advance the cursor. */
         rawlen = cur.headersize + cur.len;
-        prevlen = rawlen + delta; 
+        prevlen = rawlen + delta;
         prevlensize = zipStorePrevEntryLength(NULL, prevlen);
         prevoffset = p - zl;
         p += rawlen;
@@ -863,8 +863,8 @@ unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p) {
         zipEntry(zl + prevoffset, &cur); /* no need for "safe" variant since we already iterated on all these entries above. */
         rawlen = cur.headersize + cur.len;
         /* Move entry to tail and reset prevlen. */
-        memmove(p - (rawlen - cur.prevrawlensize), 
-                zl + prevoffset + cur.prevrawlensize, 
+        memmove(p - (rawlen - cur.prevrawlensize),
+                zl + prevoffset + cur.prevrawlensize,
                 rawlen - cur.prevrawlensize);
         p -= (rawlen + delta);
         if (cur.prevrawlen == 0) {
@@ -1005,10 +1005,22 @@ unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsigned cha
      *
      */
     int forcelarge = 0;
+
+     /*
+      * reqlen 是准备插入的 enrty 的长度
+      * p 指向当前的 entry
+      * [HEADER] [ENTRY_A(长度200)] [NEW(长度300)] [ENTRY_B] [ENTRY_C] [END]
+      *     插入前 [ENTRY_B].prevlen = 1
+      *     插入后 [ENTRY_B].prevlen = 5
+      *     nextdiff = 4
+      * [HEADER] [ENTRY_A(长度300)] [NEW(长度200)] [ENTRY_B] [ENTRY_C] [END]
+      *     插入前 [ENTRY_B].prevlen = 5
+      *     插入后 [ENTRY_B].prevlen = 1
+      *     nextdiff = -4
+      */
+
+
     nextdiff = (p[0] != ZIP_END) ? zipPrevLenByteDiff(p,reqlen) : 0;
-    // 当前下一个 entry 使用的是 5 字节的 prevlen 编码
-    // 现在准备插入一个 长度小于 254 的 entry, 只需要 1 字节编码
-    // 这种情况下 1-5 = -4
     if (nextdiff == -4 && reqlen < 4) {
         nextdiff = 0;
         // 当 forcelarge 被设置为 1 时，在后续代码中会强制使用 5 字节编码来存储 prevlen，即使实际只需要 1 字节
@@ -2615,7 +2627,7 @@ int ziplistTest(int argc, char **argv, int flags) {
 
     printf("Edge cases of __ziplistCascadeUpdate:\n");
     {
-        /* Inserting a entry with data length greater than ZIP_BIG_PREVLEN-4 
+        /* Inserting a entry with data length greater than ZIP_BIG_PREVLEN-4
          * will leads to cascade update. */
         size_t s1 = ZIP_BIG_PREVLEN-4, s2 = ZIP_BIG_PREVLEN-3;
         zl = ziplistNew();
