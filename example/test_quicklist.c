@@ -302,6 +302,10 @@ static void test_quicklist_memmove(void)
     printf("=== 示例1: 基本内存移动 ===\n");
     char buffer1[] = "abcdefgh";
     printf("原始: %s\n", buffer1);
+    /*
+     * 原始: abcdefgh
+     * 移动后: abcabcgh
+     */
 
     // 将前3个字符移动到第4个位置
     memmove(buffer1 + 3, buffer1, 3);
@@ -311,9 +315,13 @@ static void test_quicklist_memmove(void)
     char buffer2[] = "hello....world";  // '.' 代表空闲空间
     printf("原始: %s\n", buffer2);
 
+
     // 将 "world" 向前移动，覆盖空闲空间
     memmove(buffer2 + 5, buffer2 + 9, 6);  // 6包括'\0'
     printf("移动后: %s\n", buffer2);  // 输出: hello\0orld (实际显示为 "hello")
+    /* 原始: hello....world
+     * 移动后: helloworld
+     */
 
     printf("\n=== 示例3: 向前移动（数据压缩）===\n");
     char buffer3[] = "hello....world";  // '.' 代表空闲空间

@@ -5,7 +5,7 @@
 // #include "../src/dict.c"
 // #include "../src/quicklist.c"
 // #include "../src/intset.c"
-// #include "../src/zipmap.c"
+#include "../src/zipmap.c"
 #include "../src/sds.c"
 #include "../src/testhelp.h"
 // #include "../src/mstr.c"
@@ -21,17 +21,17 @@ int main(int argc, char* argv[])
 
 
     // sdsTest
-    printf("Starting sds internal tests...\n");
-    if (sdsTest(argc, argv, 0) == 0)
-    {
-        printf("All sds internal tests passed!\n");
-        return 0;
-    }
-    else
-    {
-        printf("Some sds internal tests failed!\n");
-        return 1;
-    }
+    // printf("Starting sds internal tests...\n");
+    // if (sdsTest(argc, argv, 0) == 0)
+    // {
+    //     printf("All sds internal tests passed!\n");
+    //     return 0;
+    // }
+    // else
+    // {
+    //     printf("Some sds internal tests failed!\n");
+    //     return 1;
+    // }
 
     //
     // printf("Starting listpack internal tests...\n");
@@ -71,14 +71,14 @@ int main(int argc, char* argv[])
     //     return 1;
     // }
 
-    // printf("Starting intsetTest internal tests...\n");
-    // if (zipmapTest(argc, argv, 0) == 0) {
-    //     printf("All intsetTest internal tests passed!\n");
-    //     return 0;
-    // } else  {
-    //     printf("Some quicklist internal tests failed!\n");
-    //     return 1;
-    // }
+    printf("Starting intsetTest internal tests...\n");
+    if (zipmapTest(argc, argv, 0) == 0) {
+        printf("All intsetTest internal tests passed!\n");
+        return 0;
+    } else  {
+        printf("Some quicklist internal tests failed!\n");
+        return 1;
+    }
 
     // printf("Starting mstrTest internal tests...\n");
     // if (mstrTest(argc, argv, 0) == 0)
