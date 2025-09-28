@@ -89,7 +89,7 @@ add_executable(test_quicklist test_quicklist.c ${TEST_QUICKLIST_SOURCES})
 
 set(TEST_INTERNAL_SOURCES
         ${REDIS_SRC}/src/adlist.c
-        ${REDIS_SRC}/src/listpack.c
+#        ${REDIS_SRC}/src/listpack.c
         ${REDIS_SRC}/src/util.c
 #        ${REDIS_SRC}/src/sds.c  # 测试 test_internal 的 sds 时不要导入 sds.c
         ${REDIS_SRC}/src/zmalloc.c

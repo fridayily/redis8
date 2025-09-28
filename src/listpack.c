@@ -281,7 +281,7 @@ static inline void lpEncodeIntegerGetType(int64_t v, unsigned char *intenc, uint
         /* 13 bit integer.
          * 1<<13 = 8192
          * -1 + 8192 = 8191
-         * 对应规则
+         * 对应规则 (左侧真实数值,右侧映射数值)
          * 4095 -> 4095
          * 4094 -> 4094
          * 0 -> 0

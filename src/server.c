@@ -7234,14 +7234,17 @@ int main(int argc, char **argv) {
 
 #ifdef REDIS_TEST
     /*
-     * ./redis-server test ziplist 123
-     * 执行上面命令进行测试
+     * ./redis-server test ziplist --accurate
+     * ./redis-server test quicklist --accurate
+     * ./redis-server test listpack --accurate
+     * 在 clion 中配置
      */
     monotonicInit(); /* Required for dict tests, that are relying on monotime during dict rehashing. */
     if (argc >= 3 && !strcasecmp(argv[1], "test")) {
         int flags = 0;
         for (j = 3; j < argc; j++) {
             char *arg = argv[j];
+            // 两个字符串相等返回 0
             if (!strcasecmp(arg, "--accurate")) flags |= REDIS_TEST_ACCURATE;
             else if (!strcasecmp(arg, "--large-memory")) flags |= REDIS_TEST_LARGE_MEMORY;
             else if (!strcasecmp(arg, "--valgrind")) flags |= REDIS_TEST_VALGRIND;
