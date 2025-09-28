@@ -349,7 +349,8 @@ REDIS_STATIC void __quicklistCompress(const quicklist* quicklist,
 
     /* If length is less than our compress depth (from both sides),
      * we can't compress anything.
-     * 如果不允许压缩或列表长度小于压缩深度的两倍，则不进行压缩
+     * 如果不允许压缩((_ql)->compress == 0)
+     * 或者列表长度小于压缩深度的两倍，则不进行压缩
      */
     if (!quicklistAllowsCompression(quicklist) ||
         quicklist->len < (unsigned int)(quicklist->compress * 2))
@@ -397,14 +398,18 @@ REDIS_STATIC void __quicklistCompress(const quicklist* quicklist,
     quicklistNode* reverse = quicklist->tail;
     int depth = 0;
     int in_depth = 0;
+    // 从头部和尾部同时开始查找 node
+    // 在压缩深度内查找 node, 如果找到设置 in_depth = 1, 不用压缩
     while (depth++ < quicklist->compress)
     {
+        // 理论上压缩深度内的节点不会压缩
+        // 但是删除、新增节点会影响节点是否在压缩深度以内,所以需要重新确认一遍
         quicklistDecompressNode(forward);
         quicklistDecompressNode(reverse);
 
         /*
          * while 循环最多遍历 quicklist->compress 次
-         * 所以满足改条件说明在压缩深度内,则不会压缩该节点
+         * 所以满足该条件说明在压缩深度内,则不会压缩该节点
          *
          * 如果 node 为空,则 in_depth 不会为1,不会对任意节点进行压缩
          */
@@ -429,10 +434,32 @@ REDIS_STATIC void __quicklistCompress(const quicklist* quicklist,
     if (!in_depth)
         quicklistCompressNode(node);
 
-    /* At this point, forward and reverse are one node beyond depth */
+    /* At this point, forward and reverse are one node beyond depth
+     * 加入一个litspack 如下, ele5 是插入的 listpack
+     * [ele5]<->[ele4,ele3]<->[ele2,ele1]
+     * 头尾节点不压缩
+     * 上面的 while 只遍历一次
+     * 结果是 forward=reverse
+     */
     quicklistCompressNode(forward);
     quicklistCompressNode(reverse);
 }
+
+/*
+ *   quicklistNode1<->quicklistNode2<->quicklistNode3
+ *   假设压缩深度为 1,则 quicklistNode 1 和 3 不会压缩
+ *   现在新添加了节点 quicklistNode4
+ *   上面 while 循环执行如下操作:
+ *      forward=quicklistNode1, 解压缩 Node1
+ *      reverse=quicklistNode4, 解压缩 Node4
+ *      并且 node == reverse, 则 in_depth=1
+ *      forward = quicklistNode2
+ *      reverse = quicklistNode3
+ *    while 结束后, in_depth=1 ,不对Node 进行压缩, 然后对 Node2 和 Node3 进行压缩
+ *
+ *
+ *
+ */
 
 /* This macro is used to compress a node.
  *
@@ -592,12 +619,15 @@ int quicklistNodeExceedsLimit(int fill, size_t new_sz, unsigned int new_count)
 static int isLargeElement(size_t sz, int fill)
 {
     if (unlikely(packed_threshold != 0)) return sz >= packed_threshold;
+    // 当 fill 为正数时 如果 sz 超过SIZE_SAFETY_LIMIT 时,认定为大元素
+    // 当 fill 为负数时 超过预定义大小,则认为是大元素
     if (fill >= 0)
         return !sizeMeetsSafetyLimit(sz);
     else
         return sz > quicklistNodeNegFillLimit(fill);
 }
 
+// 返回 1 允许插入
 REDIS_STATIC int _quicklistNodeAllowInsert(const quicklistNode* node,
                                            const int fill, const size_t sz)
 {
@@ -708,18 +738,23 @@ int quicklistPushHead(quicklist* quicklist, void* value, size_t sz)
 int quicklistPushTail(quicklist* quicklist, void* value, size_t sz)
 {
     quicklistNode* orig_tail = quicklist->tail;
+    // sz 是待插入元素的大小
     if (unlikely(isLargeElement(sz, quicklist->fill)))
     {
+        // 大元素存储为 PLAIN 节点
         __quicklistInsertPlainNode(quicklist, quicklist->tail, value, sz, 1);
         return 1;
     }
 
+    // 向 quicklist 尾部插入元素
+    //    如果尾部节点可以插入, 则插入尾部节点
+    //    如果尾部节点不可以插入(超出元素个数限制),则新建节点插入到 quicklist 尾部,在这个新节点插入元素
     if (likely(
         _quicklistNodeAllowInsert(quicklist->tail, quicklist->fill, sz)))
     {
         // 允许插入, 则添加数据到 quicklist 尾部节点的 listpack 尾部
         quicklist->tail->entry = lpAppend(quicklist->tail->entry, value, sz);
-        // 更新尾部节点大小
+        // 更新尾部 listpack 节点大小
         quicklistNodeUpdateSz(quicklist->tail);
     }
     else
@@ -731,7 +766,9 @@ int quicklistPushTail(quicklist* quicklist, void* value, size_t sz)
         quicklistNodeUpdateSz(node);
         _quicklistInsertNodeAfter(quicklist, quicklist->tail, node);
     }
+    // quicklist 的 count 是总元素的数量
     quicklist->count++;
+    // quicklist 尾节点的元素数量
     quicklist->tail->count++;
     return (orig_tail != quicklist->tail);
 }
@@ -843,7 +880,7 @@ REDIS_STATIC int quicklistDelIndex(quicklist* quicklist, quicklistNode* node,
         return 1;
     }
     // listpack 型节点, 删除对应元素
-    //
+    // p 是 listpack 中的一个元素
     node->entry = lpDelete(node->entry, *p, p);
     node->count--;
     if (node->count == 0)

@@ -108,10 +108,12 @@ typedef struct quicklistBookmark {
  *      so that they don't consume memory when not used.
  *  fill 2字节
  *  compress 2字节
- *  compress 1字节
+ *  bookmark_count 1字节
  *  对齐后占用 8字节
  *  bookmarks[] 柔性数组,不占用结构体本身大小
  *  所以整个结构体 40 字节
+ *
+ *  在64位系统上，这些位域通常被打包在一个或多个32位整数中。
  */
 typedef struct quicklist {
     quicklistNode *head;
