@@ -45,14 +45,14 @@
 
 /* Optimization levels for size-based filling.
  * Note that the largest possible limit is 64k, so even if each record takes
- * just one byte, it still won't overflow the 16 bit count field. */
+ *   just one byte, it still won't overflow the 16 bit count field. */
 static const size_t optimization_level[] = {4096, 8192, 16384, 32768, 65536};
 
 /* This is for test suite development purposes only, 0 means disabled. */
 static size_t packed_threshold = 0;
 
 /* set threshold for PLAIN nodes for test suit, the real limit is based on `fill` */
-int quicklistSetPackedThreshold(size_t sz)
+int  quicklistSetPackedThreshold(size_t sz)
 {
     /* Don't allow threshold to be set above or even slightly below 4GB */
     if (sz > (1ull << 32) - (1 << 20))
@@ -641,7 +641,8 @@ REDIS_STATIC int _quicklistNodeAllowInsert(const quicklistNode* node,
      * We prefer an overestimation, which would at worse lead to a few bytes
      * below the lowest limit of 4k (see optimization_level).
      * Note: No need to check for overflow below since both `node->sz` and
-     * `sz` are to be less than 1GB after the plain/large element check above. */
+     *   `sz` are to be less than 1GB after the plain/large element check above.
+     */
     size_t new_sz = node->sz + sz + SIZE_ESTIMATE_OVERHEAD;
     if (unlikely(quicklistNodeExceedsLimit(fill, new_sz, node->count + 1)))
         return 0;
@@ -1627,6 +1628,7 @@ quicklistIter* quicklistGetIteratorAtIdx(quicklist* quicklist,
 
     // 根据 direction 是 AL_START_TAIL 还是 AL_START_HEAD 返回迭代器
     quicklistIter* iter = quicklistGetIterator(quicklist, direction);
+    // n 是存在要查找元素的 quicklistNode 节点
     iter->current = n;
     if (forward)
     {
@@ -1634,7 +1636,7 @@ quicklistIter* quicklistGetIteratorAtIdx(quicklist* quicklist,
          *
          *  index: 标准化后的索引值（从头部开始计算的正数索引）
          *  accum: 累积计数，表示在找到目标节点之前已经跳过的元素总数
-         *  iter->offset: 迭代器在当前节点中的偏移量
+         *  iter->offset: 迭代器在当前节点中的偏移量(单位是元素,不是字节)
          */
         iter->offset = index - accum;
     }
@@ -1713,13 +1715,21 @@ int quicklistNext(quicklistIter* iter, quicklistEntry* entry)
     // iter->zi 不为空, 可能是第二次进入, 此时还保留着上一次迭代获取的值
     if (!iter->zi)
     {
-        /* If !zi, use current index. 解码一个 listpack,然后遍历里面元素,遍历完成后再压缩 */
+        /* If !zi, use current index.
+         * 解码一个 listpack,然后遍历里面元素,遍历完成后再压缩
+         */
         quicklistDecompressNodeForUse(iter->current);
         if (unlikely(plain))
             // 对于 PLAIN 节点，直接使用整个节点的数据
             iter->zi = iter->current->entry;
         else
-            // 对于 PACKED 节点，使用 lpSeek 定位到指定偏移量, offset 会在 iter 初始化时设置
+            /*
+             * 对于 PACKED 节点
+             * iter->current->entry 指定的 listpack 节点
+             * offset 会在 iter 初始化或者跳到下一个节点时设置
+             *      offset 的单位是元素, 更适合用 index 命名
+             * iter->zi 就是在 listpack 中第 index 个元素的地址
+             */
             iter->zi = lpSeek(iter->current->entry, iter->offset);
     }
     else if (unlikely(plain))
@@ -1857,6 +1867,7 @@ quicklist* quicklistDup(quicklist* orig)
  * Returns NULL if element not found
  *
  * 获取一个指向指定索引所在位置的迭代器和 entry
+ * entry 保存了要查找的值
  */
 quicklistIter* quicklistGetIteratorEntryAtIdx(quicklist* quicklist, const long long idx,
                                               quicklistEntry* entry)
@@ -1864,6 +1875,8 @@ quicklistIter* quicklistGetIteratorEntryAtIdx(quicklist* quicklist, const long l
     quicklistIter* iter = quicklistGetIteratorAtIdx(quicklist, AL_START_TAIL, idx);
     if (!iter) return NULL;
     // 使用 quicklistNext 获取该位置的元素内容
+    // iter 里面已经确定了是哪一个节点和要查找元素在节点的偏移量
+    // 所以可以将要查找的元素保存到 entry 中
     assert(quicklistNext(iter, entry));
     return iter;
 }
@@ -1885,7 +1898,20 @@ static void quicklistRotatePlain(quicklist* quicklist)
     quicklist->tail = new_tail;
 }
 
-/* Rotate quicklist by moving the tail element to the head. */
+/* Rotate quicklist by moving the tail element to the head.
+ * 情况一:
+ *      listpack[e1,e2]<->listpack[e3,e4]<->plain[e5]
+ *      执行后
+ *      plain[e5]<->listpack[e1,e2]<->listpack[e3,e4]
+ * 情况二:
+ *      listpack[e1,e2]<->listpack[e3,e4]<->listpack[e5,e6]
+ *      执行后
+ *      listpack[e6,e1,e2]<->listpack[e3,e4]<->listpack[e5]
+* 情况二:
+ *      listpack[e1,e2,3]
+ *      执行后
+ *      listpack[e2,e3,e1]
+ */
 void quicklistRotate(quicklist* quicklist)
 {
     if (quicklist->count <= 1)
@@ -1954,8 +1980,14 @@ void quicklistRotate(quicklist* quicklist)
     /* Remove tail entry.
      * p 是指向 listpack 中待删除元素
      * &p 则是指针的指针, 可以修改 p 的指向
+     * 这里删除尾部元素
      */
     quicklistDelIndex(quicklist, quicklist->tail, &p);
+    /* 1. value 指向栈上的 longstr 数组, 不需要释放，因为栈内存自动管理
+     * 2. value 指向 tmp, 即  listpack 内部的数据,不需要释放
+     * 下面 if 的条件就是规避掉上面两种情况
+     * 3. quicklist->len == 1 时, 由  zmalloc 分配, 需要释放
+     */
     if (value != (unsigned char*)longstr && value != tmp)
         zfree(value);
 }
@@ -2219,7 +2251,7 @@ void _quicklistBookmarkDelete(quicklist* ql, quicklistBookmark* bm)
     ql->bookmark_count--;
     memmove(bm, bm+1, (ql->bookmark_count - index)* sizeof(*bm));
     /* NOTE: We do not shrink (realloc) the quicklist yet (to avoid resonance,
-     * it may be re-used later (a call to realloc may NOP). */
+     *   it may be re-used later (a call to realloc may NOP). */
 }
 
 void quicklistBookmarksClear(quicklist* ql)
@@ -2227,7 +2259,7 @@ void quicklistBookmarksClear(quicklist* ql)
     while (ql->bookmark_count)
         zfree(ql->bookmarks[--ql->bookmark_count].name);
     /* NOTE: We do not shrink (realloc) the quick list. main use case for this
-     * function is just before releasing the allocation. */
+     *   function is just before releasing the allocation. */
 }
 
 /* The rest of this file is test cases and test helpers. */

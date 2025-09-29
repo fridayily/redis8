@@ -876,7 +876,15 @@ unsigned char *lpGet(unsigned char *p, int64_t *count, unsigned char *intbuf) {
  * When the function returns NULL, it populates the integer value by reference in 'lval'.
  * Otherwise if the element is encoded as a string a pointer to the string (pointing
  * inside the listpack itself) is returned, and 'slen' is set to the length of the
- * string. */
+ * string.
+ *
+ * p：指向 listpack 中某个元素的指针
+ * slen：保存字符串长度的指针（如果元素是字符串）
+ * lval：保存整数值的指针（如果元素是整数）
+ *
+ * 返回 NULL：表示元素是整数编码，整数值通过 lval 参数返回
+ * 返回非 NULL：表示元素是字符串编码，返回指向字符串的指针，字符串长度通过 slen 参数返回
+ */
 unsigned char *lpGetValue(unsigned char *p, unsigned int *slen, long long *lval) {
     unsigned char *vstr;
     int64_t ele_len;
@@ -1773,7 +1781,10 @@ size_t lpEstimateBytesRepeatedInteger(long long lval, unsigned long rep) {
  * Positive indexes specify the zero-based element to seek from the head to
  * the tail, negative indexes specify elements starting from the tail, where
  * -1 means the last element, -2 the penultimate and so forth. If the index
- * is out of range, NULL is returned. */
+ * is out of range, NULL is returned.
+ *
+ *
+ */
 unsigned char *lpSeek(unsigned char *lp, long index) {
     int forward = 1; /* Seek forward by default. */
 
@@ -1802,6 +1813,8 @@ unsigned char *lpSeek(unsigned char *lp, long index) {
 
     /* Forward and backward scanning is trivially based on lpNext()/lpPrev(). */
     if (forward) {
+        // 前向遍历,获取第一个元素
+        // 由于已经获取了一个元素, while 里是 >0 而不是 >=0
         unsigned char *ele = lpFirst(lp);
         while (index > 0 && ele) {
             ele = lpNext(lp,ele);

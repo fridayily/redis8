@@ -47,8 +47,13 @@
 typedef struct quicklistNode {
     struct quicklistNode *prev;
     struct quicklistNode *next;
+    /* PACKED 节点时指向 listpack
+     *      lzf 压缩直接压缩 listpack替换原来数据
+     * PLAIN 节点时指向 raw data
+     *      不支持压缩
+     */
     unsigned char *entry;
-    size_t sz;             /* entry size in bytes */
+    size_t sz;             /* entry size in bytes 未压缩的大小 */
     unsigned int count : 16;     /* count of items in listpack */
     unsigned int encoding : 2;   /* RAW==1 or LZF==2 */
     unsigned int container : 2;  /* PLAIN==1 or PACKED==2 */
@@ -130,18 +135,20 @@ typedef struct quicklistIter {
     quicklist *quicklist;
     quicklistNode *current;
     unsigned char *zi; /* points to the current element */
+    // NOTE: 感觉这里 offset 更适合改名为 index, 指的是listpack 中第 index 个元素
+    // offset 一般单位是 byte ?? 是这样吗
     long offset; /* offset in current listpack */
     int direction;
 } quicklistIter;
 
 typedef struct quicklistEntry {
     const quicklist *quicklist;
-    quicklistNode *node;
-    unsigned char *zi;
-    unsigned char *value;
-    long long longval;
-    size_t sz;
-    int offset;
+    quicklistNode *node; // 指向正在遍历的节点
+    unsigned char *zi; // listpack 中某个元素的指针
+    unsigned char *value; // 元素是指字符串时的指针
+    long long longval; // 元素是整数时保存的值
+    size_t sz; // 元素是字符串时的大小
+    int offset; // 元素的 index
 } quicklistEntry;
 
 #define QUICKLIST_HEAD 0

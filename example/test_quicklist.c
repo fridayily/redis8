@@ -372,8 +372,8 @@ int main(void)
     printf("Starting quicklistPop tests...\n\n");
 
     // test_quicklist_add_iterm();
-    test_quicklist_compress();
-    // test_quicklist_iterator();
+    // test_quicklist_compress();
+    test_quicklist_iterator();
     // test_quicklist_pop_basic();
     // test_quicklist_pop_tail();
     // test_quicklist_pop_numbers();
