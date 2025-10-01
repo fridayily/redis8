@@ -73,7 +73,10 @@ static int64_t _intsetGetEncoded(intset *is, int pos, uint8_t enc) {
     }
 }
 
-/* Return the value at pos, using the configured encoding. */
+/* Return the value at pos, using the configured encoding.
+ *
+ * 根据指定的编码获取 pos 位置的值
+ */
 static int64_t _intsetGet(intset *is, int pos) {
     return _intsetGetEncoded(is,pos,intrev32ifbe(is->encoding));
 }
@@ -159,8 +162,8 @@ static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
 
 /* Upgrades the intset to a larger encoding and inserts the given integer. */
 static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
-    uint8_t curenc = intrev32ifbe(is->encoding);
-    uint8_t newenc = _intsetValueEncoding(value);
+    uint8_t curenc = intrev32ifbe(is->encoding); // 当前的编码长度
+    uint8_t newenc = _intsetValueEncoding(value); // 升级后的编码长度
     int length = intrev32ifbe(is->length);
     // 这里是升级操作, value 小于0 插入到头部, 大于 0 插入到尾部
     int prepend = value < 0 ? 1 : 0;
@@ -172,7 +175,10 @@ static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
     /* Upgrade back-to-front so we don't overwrite values.
      * Note that the "prepend" variable is used to make sure we have an empty
      * space at either the beginning or the end of the intset.
-     * 如果是负数,prepend =1,向前插入值, set 里面所有值向后移动
+     *
+     * 因为这里是扩容操作, 插入的值肯定大于或者小于当前所有元素的值
+     * 如果是负数,prepend =1,需要在最前面插入值, set 里面所有值向后移动
+     * 如果是正数,prepend =0,需要在最后面插入值, set 里面所有值向前移动
      * intsetResize 扩容保证移动元素是安全的
      */
     while(length--)
@@ -233,9 +239,10 @@ intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
             if (success) *success = 0;
             return is;
         }
-
+        // 扩展一个元素的空间
         is = intsetResize(is,intrev32ifbe(is->length)+1);
         // 如果新元素不是插入到 intset 的末尾，则需要将插入点及其之后的所有元素向后移动一位，为新元素让出位置
+        // 这里的 1 是指一个元素,而不是一个字节 (1 会和指针相加)
         if (pos < intrev32ifbe(is->length)) intsetMoveTail(is,pos,pos+1);
     }
 
@@ -451,6 +458,18 @@ int intsetTest(int argc, char **argv, int flags) {
         is = intsetAdd(is,4,&success); assert(!success);
         assert(6 == intsetMax(is));
         assert(4 == intsetMin(is));
+        ok();
+        zfree(is);
+    }
+
+    printf("Basic insert: "); {
+        is = intsetNew();
+        is = intsetAdd(is,5,&success);assert(success);
+        is = intsetAdd(is,3,&success);assert(success);
+        is = intsetAdd(is,4,&success);assert(success);
+        is = intsetAdd(is,12345678,&success);assert(success);
+        assert(3 == intsetMin(is));
+        assert(12345678 == intsetMax(is));
         ok();
         zfree(is);
     }
