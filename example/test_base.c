@@ -11,14 +11,27 @@ void foo(int x,int y,int z)
     printf("&c = %p\n", (void*)&c);
 }
 
-
-
-int main() {
+void point_test()
+{
     int x = 1, y = 2, z = 3;
     printf("&x = %p\n", (void*)&x);
     printf("&y = %p\n", (void*)&y);
     printf("&z = %p\n", (void*)&z);
     printf("--------\n");
     foo(x, y, z);
+}
+
+
+void endian_test()
+{
+    // 0xbc614e
+    int i = 12345678;
+    // 在mac中调试时,在内存中顺序为 4e 61 bc 00,所以为小端序
+    printf("i=%d",i);
+}
+
+
+int main() {
+    endian_test();
     return 0;
 }

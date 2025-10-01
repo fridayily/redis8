@@ -40,6 +40,13 @@
  * 在不包含任何元数据的情况下，这种字符串的基本表示形式与 SDS 类似，但没有用于操作字符串的 API，
  * 仅支持为其附加元数据。下图展示了不附加元数据时，mstring（mstrhdr8）的内存布局
  *
+ *  struct __attribute__ ((__packed__)) mstrhdr8 {
+ *     uint8_t unused;
+ *     uint8_t len;
+ *     unsigned char info;
+ *      char buf[];
+ * };
+ *
  *     +----------------------------------------------+
  *     | mstrhdr8                       | c-string |  |
  *     +--------------------------------+-------------+
@@ -59,6 +66,25 @@
  * The following diagram shows the memory layout of mstr (mstrhdr8) when 3 bits in mFlags
  * are set to indicate that 3 fields of metadata are attached to the mstring at the
  * beginning.
+ *
+ *   TYPE 指 MSTR_TYPE_5,MSTR_TYPE_8,MSTR_TYPE_16,MSTR_TYPE_64
+ *   m-bit 是否有元数据
+ *
+ *   在小端系统中, mstrhdr8 的内存布局为
+ *
+ *   +-------------------------------------------------------------------------------+
+ *   | METADATA FIELDS       | mflags | mstrhdr8                       | c-string |  |
+ *   +-----------------------+--------+--------------------------------+-------------+
+ *   |?bytes |?bytes |?bytes |16b     |8b   |5b     |1b      |2b       |?bytes    |8b|
+ *   | Meta3 | Meta2 | Meta0 | 0x1101 | Len |Unused |m-bit=1 | Type    | String   |\0|
+ *   +-------------------------------------------------------------------------------+
+ *                                                                     ^
+ *                                                                     |
+ *                         mstrNewWithMeta() returns pointer to here --+
+ *
+ *
+ *   下面是官方的注释, 这里画的结构应该是错误的
+ *   mstrIsMetaAttached 中明确倒数第 3 个位为 m-bit
  *
  *   +-------------------------------------------------------------------------------+
  *   | METADATA FIELDS       | mflags | mstrhdr8                       | c-string |  |
@@ -142,6 +168,14 @@
  *    a new kind of mstr is required to be limited to odd addresses, then we must
  *    make sure that sizes of all related metadatas that are defined in mstrKind
  *    are even in size.
+ *
+ *    Redis的一些优化依赖于SDS地址总是奇数指针这一特性
+ *    MSTR设计时也考虑了实现同样的特性
+ *
+ *    所有mstrhdrX类型的头部大小都被设计为奇数
+ *    如果需要MSTR指针地址保持为奇数，则要求在mstrKind中定义的所有相关元数据大小都必须是偶数
+ *    这是因为偶数大小的元数据不会改变指针的奇偶性
+ *
  */
 
 #ifndef __MSTR_H
@@ -179,6 +213,8 @@ typedef char *mstr;
  * */
 typedef uint16_t mstrFlags;
 
+// LSB (Least Significant Bit): 最低有效位
+// MSB (Most Significant Bit): 最高有效位
 struct __attribute__ ((__packed__)) mstrhdr5 {
     unsigned char info; /* 2 lsb of type, 1 metadata, and 5 msb of string length */
     char buf[];

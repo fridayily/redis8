@@ -33,12 +33,12 @@ mstr mstrNew(const char *initStr, size_t lenStr, int trymalloc) {
     int mstrHdr = mstrHdrSize(type);
 
     assert(lenStr + mstrHdr + 1 > lenStr); /* Catch size_t overflow */
-
+    // 头部长度 + 字符串长度 + '\0'
     size_t len = mstrHdr + lenStr + NULL_SIZE;
     sh = trymalloc? s_trymalloc(len) : s_malloc(len);
 
     if (sh == NULL) return NULL;
-
+    // 移动指针到存储数据部分
     s = (char*)sh + mstrHdr;
     pInfo = ((unsigned char*)s) - 1;
 
@@ -200,7 +200,8 @@ mstrFlags *mstrFlagsRef(mstr s) {
     switch(s[-1]&MSTR_TYPE_MASK) {
         case MSTR_TYPE_5:
         // sizeof(struct mstrhdr5) = 1
-        // 这里 mstrhdr 都是奇数,
+        // 这里 mstrhdr 都是奇数
+        // 这里-1 是对指针操作, 即减去 sizeof(mstrFlags)
             return ((mstrFlags *) (s - sizeof(struct mstrhdr5))) - 1;
         case MSTR_TYPE_8:
         // sizeof(struct mstrhdr8) = 3
@@ -217,6 +218,9 @@ mstrFlags *mstrFlagsRef(mstr s) {
  * index (flagIdx). If the metadata doesn't exist, it still returns a reference
  * to the starting location where it would have been written among other metadatas.
  * To verify if `flagIdx` of some metadata is attached, use `mstrGetFlag(s, flagIdx)`.
+ *
+ * 用于返回指向指定元数据索引（flagIdx）对应的元数据内存位置的指针
+ * [meta-data#N]...[meta-data#0][mstrFlags][mstrhdr][string][null]
  */
 void *mstrMetaRef(mstr s, struct mstrKind *kind, int flagIdx) {
     int metaOffset = 0;
@@ -298,7 +302,7 @@ size_t mstrlen(const mstr s) {
 static inline int mstrSumMetaLen(mstrKind *k, mstrFlags flags) {
     int total = 0;
     int i = 0 ;
-    while (flags) {
+    while (flags) { // mstrFlags 是 mstrKind 数组的索引的 flag,如果对应的索引 flag 为0 ,不会占用元数据存储空间
         total += (flags & 0x1) ? k->metaSize[i] : 0;
         flags >>= 1;
         ++i;
@@ -420,7 +424,7 @@ int mstrTest(int argc, char **argv, int flags) {
 
     struct mstrKind kind_mymstr = {
             .name = "my_mstr",
-            .metaSize[META_IDX_MYMSTR_TTL4]           = 4,
+            .metaSize[META_IDX_MYMSTR_TTL4]           = 4, // 第 1 个元数据用的字节数
             .metaSize[META_IDX_MYMSTR_TTL8]           = 8,
             .metaSize[META_IDX_MYMSTR_TYPE_ENC_LRU]   = 4,
             .metaSize[META_IDX_MYMSTR_VALUE_PTR]      = 8,
@@ -494,6 +498,46 @@ int mstrTest(int argc, char **argv, int flags) {
                   mstrlen(s) == 3);
 
         unsigned char expMem[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x1c, 'f', 'o', 'o', '\0' };
+        uint32_t value = 0x12345678;
+        memcpy(expMem, &value, sizeof(uint32_t));
+        test_cond("Verify string and TTL4 payload", memcmp(
+                mstrMetaRef(s, &kind_mymstr, 0) , expMem, sizeof(expMem)) == 0);
+
+        test_cond("Verify mstrIsMetaAttached() function works", mstrIsMetaAttached(s) != 0);
+
+        mstrFree(&kind_mymstr, s);
+    }
+
+
+    TEST_CONTEXT("Create mstr_8 with TTL4")
+    {
+        uint32_t *ttl;
+        char *str = "0123456789012345678901234567890123456789"; // 40 bytes
+
+        mstr s = mstrNewWithMeta(&kind_mymstr,
+                                 str,
+                                 strlen(str),
+                                 B(META_IDX_MYMSTR_TTL4)  | B(META_IDX_MYMSTR_VALUE_PTR), /* allocate with TTL4 metadata */
+                                 0);
+
+        ttl = mstrMetaRef(s, &kind_mymstr, META_IDX_MYMSTR_TTL4);
+        *ttl = 0x12345678;
+
+        char *meta_str = "abcdefg";
+
+        *((uint64_t *) (mstrMetaRef(s, &kind_mymstr,
+                                    META_IDX_MYMSTR_VALUE_PTR))) = (uint64_t)meta_str;
+
+        // hdrlen = 3
+        // strlen = 40
+        // NULL_SIZE = 1
+        // sizeof(mstrFlags) = 2
+        // mstrSumMetaLen(kind, *pMetaFlags) =12
+        test_cond("Verify memory-allocation and string lengths",
+                  mstrAllocLen(s, &kind_mymstr) == (3 + 40 + 1 + 2  + 12 ) &&
+                  mstrlen(s) == 40);
+
+        unsigned char expMem[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x09, 0x00,0x00,0x28, 0x05, '0x30', '0x31', '0x32', '0x33' };
         uint32_t value = 0x12345678;
         memcpy(expMem, &value, sizeof(uint32_t));
         test_cond("Verify string and TTL4 payload", memcmp(
