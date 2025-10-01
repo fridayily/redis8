@@ -173,6 +173,7 @@ mstr mstrNewCopy(struct mstrKind *kind, mstr src, mstrFlags newFlags) {
             int isFlag1Set = flags1Shift & 0x1;
             int isFlag2Set = flags2Shift & 0x1;
 
+            // 对应的标志为设置为1, 移动指针到对应的元数据位置
             if (isFlag1Set) at1 -= kind->metaSize[i];
             if (isFlag2Set) at2 -= kind->metaSize[i];
 
@@ -244,6 +245,7 @@ void *mstrGetAllocPtr(struct mstrKind *kind, mstr str) {
         return (char*)str - mstrHdrSize(str[-1]);
 
     int totalMetaLen = mstrSumMetaLen(kind, *mstrFlagsRef(str));
+    // 返回 mstr 元数据的开始位置
     return (char*)str - mstrHdrSize(str[-1]) - sizeof(mstrFlags) - totalMetaLen;
 }
 
