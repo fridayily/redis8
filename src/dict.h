@@ -110,7 +110,7 @@ typedef struct dictType {
 struct dict {
     dictType *type;
 
-    // 声明创建了一个包含两个元素的数组，每个元素都是一个指向 dictEntry* 的指针
+    // 声明创建了一个包含两个元素的数组，每个元素都是一个指向 dictEntry* 的指针,即 dictEntry** 类型
     // ht_table[0] 指向第一个哈希表
     // ht_table[1] 指向第二个哈希表
     // 占用 16 字节
