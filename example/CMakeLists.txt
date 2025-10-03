@@ -196,3 +196,6 @@ else()
 endif()
 
 
+add_executable(fenwick_tree fenwick_tree.c)
+
+

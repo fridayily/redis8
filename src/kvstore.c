@@ -133,7 +133,10 @@ static int getAndClearDictIndexFromCursor(kvstore *kvs, unsigned long long *curs
 
 /* Updates binary index tree (also known as Fenwick tree), increasing key count for a given dict.
  * You can read more about this data structure here https://en.wikipedia.org/wiki/Fenwick_tree
- * Time complexity is O(log(kvs->num_dicts)). */
+ * Time complexity is O(log(kvs->num_dicts)).
+ *
+ * delta表示键数的变化量（正数表示增加，负数表示减少）
+ */
 static void cumulativeKeyCountAdd(kvstore *kvs, int didx, long delta) {
     kvs->key_count += delta;
 
@@ -155,6 +158,12 @@ static void cumulativeKeyCountAdd(kvstore *kvs, int didx, long delta) {
             assert(kvs->dict_size_index[idx] >= (unsigned long long)labs(delta));
         }
         kvs->dict_size_index[idx] += delta;
+        /*
+         * 用于获取 idx 二进制表示的最右边的1所代表的数值
+         * idx = 12 = b1100
+         * -idx = -12 = b0100  补码表示, 取反+1
+         * idx & -idx = b0100  = 4
+         */
         idx += (idx & -idx);
     }
 }
@@ -164,6 +173,7 @@ static dict *createDictIfNeeded(kvstore *kvs, int didx) {
     dict *d = kvstoreGetDict(kvs, didx);
     if (d) return d;
 
+    // 创建一个 dict
     kvs->dicts[didx] = dictCreate(&kvs->dtype);
     kvs->allocated_dicts++;
     return kvs->dicts[didx];
@@ -280,6 +290,7 @@ kvstore *kvstoreCreate(dictType *type, int num_dicts_bits, int flags) {
     kvs->num_dicts = 1 << kvs->num_dicts_bits;
     kvs->dicts = zcalloc(sizeof(dict*) * kvs->num_dicts);
     if (!(kvs->flags & KVSTORE_ALLOCATE_DICTS_ON_DEMAND)) {
+        // 创建 num_dicts 个 dict
         for (int i = 0; i < kvs->num_dicts; i++)
             createDictIfNeeded(kvs, i);
     }
