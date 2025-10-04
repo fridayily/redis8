@@ -46,6 +46,10 @@ struct _kvstore {
     int non_empty_dicts;                   /* The number of non-empty dicts. */
     unsigned long long key_count;          /* Total number of keys in this kvstore. */
     unsigned long long bucket_count;       /* Total number of buckets in this kvstore across dictionaries. */
+    /*
+     * 二进制索引树（Binary Indexed Tree，也称为 Fenwick Tree）的实现，
+     * 用于高效维护和查询键值存储中各个字典的累积键频率
+     */
     unsigned long long *dict_size_index;   /* Binary indexed tree (BIT) that describes cumulative key frequencies up until given dict-index. */
     size_t overhead_hashtable_lut;         /* The overhead of all dictionaries. */
     size_t overhead_hashtable_rehashing;   /* The overhead of dictionaries rehashing. */
@@ -99,12 +103,16 @@ static int kvstoreDictIsRehashingPaused(kvstore *kvs, int didx)
 }
 
 /* Returns total (cumulative) number of keys up until given dict-index (inclusive).
- * Time complexity is O(log(kvs->num_dicts)). */
+ * Time complexity is O(log(kvs->num_dicts)).
+ * 返回从第一个字典到指定字典索引的累积键数量
+ */
 static unsigned long long cumulativeKeyCountRead(kvstore *kvs, int didx) {
     if (kvs->num_dicts == 1) {
         assert(didx == 0);
         return kvstoreSize(kvs);
     }
+
+    //  二进制索引数的索引从1开始
     int idx = didx + 1;
     unsigned long long sum = 0;
     while (idx > 0) {
@@ -135,15 +143,23 @@ static int getAndClearDictIndexFromCursor(kvstore *kvs, unsigned long long *curs
  * You can read more about this data structure here https://en.wikipedia.org/wiki/Fenwick_tree
  * Time complexity is O(log(kvs->num_dicts)).
  *
+ * 更新操作
  * delta表示键数的变化量（正数表示增加，负数表示减少）
  */
 static void cumulativeKeyCountAdd(kvstore *kvs, int didx, long delta) {
     kvs->key_count += delta;
 
+    // 从 dict 数组中获取第 didx 个字典
     dict *d = kvstoreGetDict(kvs, didx);
+    // 获取键的数量
     size_t dsize = dictSize(d);
     /* Increment if dsize is 1 and delta is positive (first element inserted, dict becomes non-empty).
-     * Decrement if dsize is 0 (dict becomes empty). */
+     * Decrement if dsize is 0 (dict becomes empty).
+     * 在调用这个函数之前,对字典进行修改,键的数量发生变化
+     * 之前调用 add , dsize==1 ,delta>0 => 有一个非空的字典产生
+     * 之前调用 del,  dsize==0 => 有一个非空的字典减少
+     * 其余情况不改变非空字典数量
+     */
     int non_empty_dicts_delta = (dsize == 1 && delta > 0) ? 1 : (dsize == 0) ? -1 : 0;
     kvs->non_empty_dicts += non_empty_dicts_delta;
 
@@ -155,6 +171,11 @@ static void cumulativeKeyCountAdd(kvstore *kvs, int didx, long delta) {
     int idx = didx + 1; /* Unlike dict indices, BIT is 1-based, so we need to add 1. */
     while (idx <= kvs->num_dicts) {
         if (delta < 0) {
+            /*
+             * kvs->dict_size_index[idx] - 这是 BIT 中索引为 idx 的节点值，表示累积的键数量
+             * labs(delta) - 这是 delta 的绝对值（因为 delta 是 long 类型）
+             * 断言条件 - 确保当前节点的值大于等于要减少的数量
+             */
             assert(kvs->dict_size_index[idx] >= (unsigned long long)labs(delta));
         }
         kvs->dict_size_index[idx] += delta;
@@ -356,10 +377,12 @@ void kvstoreRelease(kvstore *kvs) {
     zfree(kvs);
 }
 
+// NOTE: 这里是否可以添加 likely 来优化
 unsigned long long int kvstoreSize(kvstore *kvs) {
     if (kvs->num_dicts != 1) {
         return kvs->key_count;
     } else {
+        // 字典数量为1时, 计算第 0 个字典的键数量
         return kvs->dicts[0]? dictSize(kvs->dicts[0]) : 0;
     }
 }
@@ -546,16 +569,41 @@ void kvstoreGetStats(kvstore *kvs, char *buf, size_t bufsize, int full) {
  * value is greater than the node's value. If it is, we remove the node's value from the target and recursively
  * search for the new target using the current node as the parent.
  * Time complexity of this function is O(log(kvs->num_dicts))
+ *
+ * 返回值是字典数组的索引(第几个字典)
  */
 int kvstoreFindDictIndexByKeyIndex(kvstore *kvs, unsigned long target) {
     if (kvs->num_dicts == 1 || kvstoreSize(kvs) == 0)
         return 0;
     assert(target <= kvstoreSize(kvs));
 
+    // 假设 num_dicts_bits = 4, target=255
+    // 1000 -> 0100 -> 0010 -> 0001
+    // [1(100)][2(200)][4(300)][8(800)]
+    //      [1(100)] 表示1号节点的累积key 值为100
+    //      [2(200)] 表示2号节点的累积key 值为200
+    // 节点的二进制表示只有1个1时, 该节点存的累积值
+    // 第一轮 i= 0b1000 target=255 result=0 current=8
+    //           (255 > 800) = false
+    // 第二轮 i=0b0100 target=255 result=0 current=4
+    //           (255 > 300) = false
+    // 第三轮 i=0b0010 target=255 result=0 current=2
+    //           (255>200) = true => target=55, result = 2
+    // 第四轮 i=0b0001 target=55 result=2 current=3
+    //          如果 [3(60)]
+    //              (55>60) = false 结束循环 最终 result=2
+    //          如果 [3(40)]
+    //              (55>40) = true
+    //                target=15, result =3 结束循环 最终 result=3
+    // 上面的例子中, 截止2号节点, key 数量为 200
+    //    - 如果3号节点的键值数量为 60, 说明3号节点包含要查找的key, 应该是要返回3 的,
+    //      但索引树是 1-base 的数组, 返回 result=2 刚好是 0-base 数组的索引
+    //    - 如果3号节点的键值数量为 40, 说明4号节点包含要查找的key, 应该是要返回4 的,
+    //      但索引树是 1-base 的数组, 返回 result=3 刚好是 0-base 数组的索引
     int result = 0, bit_mask = 1 << kvs->num_dicts_bits;
     for (int i = bit_mask; i != 0; i >>= 1) {
         int current = result + i;
-        /* When the target index is greater than 'current' node value the we will update
+        /* When the target index is greater than 'current' node value then we will update
          * the target and search in the 'current' node tree. */
         if (target > kvs->dict_size_index[current]) {
             target -= kvs->dict_size_index[current];
@@ -583,6 +631,7 @@ int kvstoreGetNextNonEmptyDictIndex(kvstore *kvs, int didx) {
         assert(didx == 0);
         return -1;
     }
+    // 获取前 didx 个字典的累积键的数量
     unsigned long long next_key = cumulativeKeyCountRead(kvs, didx) + 1;
     return next_key <= kvstoreSize(kvs) ? kvstoreFindDictIndexByKeyIndex(kvs, next_key) : -1;
 }
@@ -868,7 +917,11 @@ dictEntry *kvstoreDictFind(kvstore *kvs, int didx, void *key) {
     return dictFind(d, key);
 }
 
+
+// 向指定的 dict 添加 key
+// 并更新 key 数量的统计信息
 dictEntry *kvstoreDictAddRaw(kvstore *kvs, int didx, void *key, dictEntry **existing) {
+    // 创建对应索引的字典, 依据 kvs->dtype
     dict *d = createDictIfNeeded(kvs, didx);
     dictEntry *ret = dictAddRaw(d, key, existing);
     if (ret)

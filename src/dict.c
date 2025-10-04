@@ -635,6 +635,7 @@ dictEntry *dictAddNonExistsByHash(dict *d, void *key, const uint64_t hash) {
  */
 dictEntry *dictInsertAtPosition(dict *d, void *key, void *position) {
   // position 是 *dictEntry 数组中的一个元素
+  // 双指针是要修改 bucket 的值
   dictEntry **bucket = position; /* It's a bucket, but the API hides that. */
   dictEntry *entry;
   /* If rehashing is ongoing, we insert in table 1, otherwise in table 0.
@@ -647,13 +648,17 @@ dictEntry *dictInsertAtPosition(dict *d, void *key, void *position) {
     if (!*bucket) {
       /* We can store the key directly in the destination bucket without
        * allocating dictEntry.
+       *
        */
       if (d->type->keys_are_odd) {
+        // 如果键的地址是奇数，直接使用键指针（最低位为1，可以标记为键指针）
         entry = key;
         assert(entryIsKey(entry));
         /* The flag ENTRY_PTR_IS_ODD_KEY (=0x1) is already aligned with LSB bit
          */
       } else {
+        // 如果键的地址是偶数，使用encodeMaskedPtr将键指针编码，
+        // 设置特定标志位表示这是一个键指针
         entry = encodeMaskedPtr(key, ENTRY_PTR_IS_EVEN_KEY);
       }
     } else {
@@ -939,6 +944,10 @@ void *dictFetchValue(dict *d, const void *key) {
  * If we want to find an entry before delete this entry, this an optimization to
  * avoid dictFind followed by dictDelete. i.e. the first API is a find, and it
  * gives some info to the second one to avoid repeating the lookup
+ *
+ * 两阶段删除是一种优化的删除策略，它将查找和删除操作分离，避免重复的哈希计算和链表遍历。
+ * dictTwoPhaseUnlinkFind: 查找并准备删除条目
+ * dictTwoPhaseUnlinkFree: 执行实际的删除和内存释放
  */
 dictEntry *dictTwoPhaseUnlinkFind(dict *d, const void *key, dictEntry ***plink,
                                   int *table_index) {
@@ -957,7 +966,11 @@ dictEntry *dictTwoPhaseUnlinkFind(dict *d, const void *key, dictEntry ***plink,
     // 如果是第一个表且索引小于rehash索引，则跳过（该bucket已经迁移）
     if (table == 0 && (long)idx < d->rehashidx)
       continue;
-    // 获取bucket的头指针
+    // 创建一个 dictEntry ** 类型指针变量 ref
+    // 这个变量初始化为指向一个 entry, 在链表中迭代时会指向 next 指针
+    // 因此 ref 指向的是一个 bucket 或者 entrty 的 next 指针
+    // 这里令 *plink = ref;
+    // 这样在删除 *ret 的时候 *plink = dictGetNext(he) 将next 指向下一个节点
     dictEntry **ref = &d->ht_table[table][idx];
     while (ref && *ref) {
       void *de_key = dictGetKey(*ref);
@@ -968,10 +981,10 @@ dictEntry *dictTwoPhaseUnlinkFind(dict *d, const void *key, dictEntry ***plink,
         dictPauseRehashing(d);
         return *ref;
       }
-      // 移动到下一个条目
+      // 当前 entry->next 的地址
       ref = dictGetNextRef(*ref);
     }
-    // 如果没有在进行rehash，退出循环
+    // 如果没有在进行rehash, 表2没有保存 key ，退出循环
     if (!dictIsRehashing(d))
       return NULL;
   }
