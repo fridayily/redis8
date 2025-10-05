@@ -287,7 +287,15 @@ int _dictResize(dict *d, unsigned long size, int *malloc_failed) {
 
   /* Is this the first initialization or is the first hash table empty? If so
    * it's not really a rehashing, we can just set the first hash table so that
-   * it can accept keys. */
+   * it can accept keys.
+   *  ht_table[0] == NULL => 字典刚创建
+   *  ht_used[0] == 0 => rehashing 完成
+   *
+   *  NOTE: 字典刚创建 为什么要调用 rehashingCompleted
+   *    kvstore 中刚创建字典时 kvstoreDictRehashingStarted 将 dict 添加到 kvs->rehashing
+   *    然后又调用 kvstoreDictRehashingCompleted 将 dict 从 kvs->rehashing 删除
+   *    这种操作有点奇怪
+   */
   if (d->ht_table[0] == NULL || d->ht_used[0] == 0) {
     if (d->type->rehashingCompleted)
       d->type->rehashingCompleted(d);
@@ -1129,7 +1137,14 @@ size_t dictEntryMemUsage(void) { return sizeof(dictEntry); }
  * When an unsafe iterator is initialized, we get the dict fingerprint, and
  * check the fingerprint again when the iterator is released. If the two
  * fingerprints are different it means that the user of the iterator performed
- * forbidden operations against the dictionary while iterating. */
+ * forbidden operations against the dictionary while iterating.
+ *
+ * 收集字典的6个关键属性：
+ *  d->ht_table[0] 和 d->ht_table[1]：两个哈希表的指针
+ *  d->ht_size_exp[0] 和 d->ht_size_exp[1]：两个哈希表的大小指数
+ *  d->ht_used[0] 和 d->ht_used[1]：两个哈希表的已使用元素数量
+ *  这个算法通过一系列位运算和算术运算，将6个整数混合成一个最终的哈希值。
+ */
 unsigned long long dictFingerprint(dict *d) {
   unsigned long long integers[6], hash = 0;
   int j;
@@ -1199,15 +1214,18 @@ dictIterator *dictGetSafeIterator(dict *d) {
 }
 
 // 先选取 0 号 hash 表
-// 先遍历 0 号 bucket 下的链表,再 遍历 1 号 bucket 下的链表
+// 先遍历 0 号 bucket 下的链表 ,再遍历 1 号 bucket 下的链表
+
 // 再选取 1 号 hash 表, 执行相同操作
 dictEntry *dictNext(dictIterator *iter) {
   while (1) {
     if (iter->entry == NULL) {
       if (iter->index == -1 && iter->table == 0) {
+        // 如果是安全迭代器（iter->safe 为真）暂停字典的 rehash 操作
         if (iter->safe)
           dictPauseRehashing(iter->d);
         else
+          // 如果是不安全迭代器，则记录当前字典的指纹（fingerprint）用于后续验证
           iter->fingerprint = dictFingerprint(iter->d);
 
         /* skip the rehashed slots in table[0] */
@@ -1217,6 +1235,7 @@ dictEntry *dictNext(dictIterator *iter) {
       }
       iter->index++;
       if (iter->index >= (long)DICTHT_SIZE(iter->d->ht_size_exp[iter->table])) {
+        // 超过 table0 的索引,切换到 table1
         if (dictIsRehashing(iter->d) && iter->table == 0) {
           iter->table++;
           iter->index = 0;
@@ -1257,6 +1276,7 @@ dictEntry *dictGetRandomKey(dict *d) {
     return NULL;
   if (dictIsRehashing(d))
     _dictRehashStep(d);
+  // 随机选取一个 bucket
   if (dictIsRehashing(d)) {
     unsigned long s0 = DICTHT_SIZE(d->ht_size_exp[0]);
     do {
@@ -1314,15 +1334,23 @@ dictEntry *dictGetRandomKey(dict *d) {
  * of the returned items, but only when you need to "sample" a given number
  * of continuous elements to run some kind of algorithm or to produce
  * statistics. However the function is much faster than dictGetRandomKey()
- * at producing N elements. */
+ * at producing N elements.
+ *
+ * 与 dictGetRandomKey 不同，dictGetSomeKeys 采用以下策略来提高采样的均匀性：
+ *   随机起点: 从哈希表中的随机位置开始
+ *   线性遍历: 按顺序遍历桶，而不是随机选择桶
+ *   采样算法: 使用蓄水池采样(Reservoir Sampling)算法优化长链表的采样
+ */
 unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
   unsigned long j;      /* internal hash table id, 0 or 1. */
   unsigned long tables; /* 1 or 2 tables? */
   unsigned long stored = 0, maxsizemask;
   unsigned long maxsteps;
 
+  // 如果请求的采样数超过字典大小，则调整为字典大小
   if (dictSize(d) < count)
     count = dictSize(d);
+  // 限定要执行的采样次数
   maxsteps = count * 10;
 
   /* Try to do a rehashing work proportional to 'count'. */
@@ -1333,7 +1361,9 @@ unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
       break;
   }
 
+  // 如果正在重哈希，则需要遍历两个表
   tables = dictIsRehashing(d) ? 2 : 1;
+  // 选择较大的掩码以确保覆盖所有可能的索引
   maxsizemask = DICTHT_SIZE_MASK(d->ht_size_exp[0]);
   if (tables > 1 && maxsizemask < DICTHT_SIZE_MASK(d->ht_size_exp[1]))
     maxsizemask = DICTHT_SIZE_MASK(d->ht_size_exp[1]);
@@ -1345,17 +1375,34 @@ unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
     for (j = 0; j < tables; j++) {
       /* Invariant of the dict.c rehashing: up to the indexes already
        * visited in ht[0] during the rehashing, there are no populated
-       * buckets, so we can skip ht[0] for indexes between 0 and idx-1. */
+       * buckets, so we can skip ht[0] for indexes between 0 and idx-1.
+       *
+       * d->rehashidx 记录了重哈希的进度，表示已经处理到ht[0]的哪个索引位置
+       * 在索引0到d->rehashidx-1之间的桶已经完成了重哈希，其中的元素已经被迁移到ht[1]
+       * 在索引d->rehashidx及之后的桶还未处理，其中的元素仍在ht[0]中
+       */
       if (tables == 2 && j == 0 && i < (unsigned long)d->rehashidx) {
         /* Moreover, if we are currently out of range in the second
          * table, there will be no elements in both tables up to
          * the current rehashing index, so we jump if possible.
-         * (this happens when going from big to small table). */
+         * (this happens when going from big to small table).
+         *
+         * table0 16
+         * rehashidx = 12
+         * 如果 i =9 & table1 = 8 (大表->小表), 说明2个表的 9号桶到11 号桶都是没数据的
+         *    令 i = 12
+         * 如果 i= 5 & table1 =8:
+         *     结束当前循环
+         *        索引i位置的元素已经从ht[0]迁移到了ht[1]
+         *        会在后续处理ht[1]时访问这些元素
+         *
+         */
         if (i >= DICTHT_SIZE(d->ht_size_exp[1]))
           i = d->rehashidx;
         else
           continue;
       }
+
       if (i >= DICTHT_SIZE(d->ht_size_exp[j]))
         continue; /* Out of range for this table. */
       dictEntry *he = d->ht_table[j][i];
@@ -1948,6 +1995,19 @@ void dictCombineStats(dictStats *from, dictStats *into) {
   }
 }
 
+
+/*
+ * 返回指定 table 的统计信息
+ * 统计指向 hash 表的如下信息
+ *    hash 表编号
+ *    统计数组 clvector
+ *      空 bucket 的数量
+ *      bucket 下链表长度为 1 的数量
+ *      bucket 下链表长度为 n 的数量
+ *    buckets 数量
+ *    最长的链表长度
+ *    所有 bucket 下链表长度的累积值
+ */
 dictStats *dictGetStatsHt(dict *d, int htidx, int full) {
   unsigned long *clvector = zcalloc(sizeof(unsigned long) * DICT_STATS_VECTLEN);
   dictStats *stats = zcalloc(sizeof(dictStats));
@@ -1963,7 +2023,7 @@ dictStats *dictGetStatsHt(dict *d, int htidx, int full) {
     dictEntry *he;
 
     if (d->ht_table[htidx][i] == NULL) {
-      // 链表长度为 0 的 bucket 个数
+      // 链表长度为 0 的 bucket 个数.即空 bucket 数量
       clvector[0]++;
       continue;
     }
@@ -1977,6 +2037,8 @@ dictStats *dictGetStatsHt(dict *d, int htidx, int full) {
       he = dictGetNext(he);
     }
     // 统计长度为 chainlen 的 bucket 个数
+    // 如果 chainlen=30 clvector[30]++
+    // 如果 chainlen=60 clvector[49]++
     clvector[(chainlen < DICT_STATS_VECTLEN) ? chainlen
                                              : (DICT_STATS_VECTLEN - 1)]++;
     // 更新最长的链表长度

@@ -124,6 +124,10 @@ void expireScanCallback(void *privdata, const dictEntry *const_de) {
     data->sampled++;
 }
 
+/*
+ * 用于判断给定的字典（哈希表）是否适合进行抽样操作，特别是在处理键过期检查时。
+ * 只有当桶数量大于初始大小（DICT_HT_INITIAL_SIZE，通常为4）时才进行检查
+ */
 static inline int isExpiryDictValidForSamplingCb(dict *d) {
     long long numkeys = dictSize(d);
     unsigned long buckets = dictBuckets(d);

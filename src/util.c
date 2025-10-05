@@ -61,7 +61,13 @@
 
 static_assert(UINTPTR_MAX == 0xffffffffffffffff || UINTPTR_MAX == 0xffffffff, "Unsupported pointer size");
 
-/* Glob-style pattern matching. */
+/* Glob-style pattern matching.
+    *: 匹配零个或多个字符
+    ?: 匹配单个字符
+    [...]: 字符类，匹配括号中的任意字符
+    [^...]: 否定字符类，匹配不在括号中的任意字符
+    \: 转义字符，用于匹配特殊字符本身
+ */
 static int stringmatchlen_impl(const char *pattern, int patternLen,
         const char *string, int stringLen, int nocase, int *skipLongerMatches, int nesting)
 {

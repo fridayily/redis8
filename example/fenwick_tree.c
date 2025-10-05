@@ -90,6 +90,24 @@ unsigned long long fenwickGetValue(FenwickTree *ft, int index) {
     return fenwickRangeSum(ft, index, index);
 }
 
+// 来源于 kvstoreFindDictIndexByKeyIndex
+// 返回 target 所在的节点的索引(0-based)
+// fenwick 是 1-based 的
+int findDictIndexByKeyIndex(FenwickTree *ft,unsigned long target) {
+    // 这里有15个节点,二进制表示长度为 4
+    int result = 0, bit_mask = 1<< 4;
+    for (int i=bit_mask;i!=0;i>>=1) {
+        int current = result + i;
+        // printf("current %d\n",current);
+        if (target > ft->tree[current]) {
+            target -= ft->tree[current];
+            result = current;
+        }
+    }
+    printf("result %d\n",result);
+    return result;
+}
+
 // 打印Fenwick Tree的状态（用于调试）
 void printFenwickTree(FenwickTree *ft) {
     printf("Fenwick Tree (size=%d):\n", ft->size);
@@ -102,7 +120,7 @@ void printFenwickTree(FenwickTree *ft) {
 // 示例和测试代码
 int main() {
     // 创建一个大小为10的Fenwick Tree
-    FenwickTree *ft = createFenwickTree(15);
+    FenwickTree *ft = createFenwickTree(16);
 
     printf("=== Fenwick Tree 演示 ===\n");
 
@@ -123,12 +141,22 @@ int main() {
     fenwickUpdate(ft, 13, 130);
     fenwickUpdate(ft, 14, 140);
     fenwickUpdate(ft, 15, 150);
+    fenwickUpdate(ft, 16, 160);
+
+
 
     printf("插入数据后，前缀和:\n");
-    printf("  前缀和[1,%d] = %llu\n", 3, fenwickPrefixSum(ft, 3));
-    printf("  前缀和[1,%d] = %llu\n", 6, fenwickPrefixSum(ft, 6));
-    printf("  前缀和[1,%d] = %llu\n", 11, fenwickPrefixSum(ft, 11));
-    printf("  前缀和[1,%d] = %llu\n", 15, fenwickPrefixSum(ft, 15));
+    printf("  前缀和[1,%d] = %llu\n", 3, fenwickPrefixSum(ft, 3)); // 60
+    printf("  前缀和[1,%d] = %llu\n", 6, fenwickPrefixSum(ft, 6)); // 210
+    printf("  前缀和[1,%d] = %llu\n", 7, fenwickPrefixSum(ft, 7)); // 280
+    printf("  前缀和[1,%d] = %llu\n", 11, fenwickPrefixSum(ft, 11)); // 660
+    printf("  前缀和[1,%d] = %llu\n", 15, fenwickPrefixSum(ft, 15)); // 1200
+
+    printf("=== findDictIndex 演示 ===\n");
+    findDictIndexByKeyIndex(ft,60); // 返回 2
+    findDictIndexByKeyIndex(ft,61); // 返回 3
+    findDictIndexByKeyIndex(ft,280); // 返回 6
+    findDictIndexByKeyIndex(ft,281); // 返回 7
 
     printf("\n区间和:\n");
     printf("  区间和[2,4] = %llu\n", fenwickRangeSum(ft, 2, 4));

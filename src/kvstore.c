@@ -51,6 +51,8 @@ struct _kvstore {
      * 用于高效维护和查询键值存储中各个字典的累积键频率
      */
     unsigned long long *dict_size_index;   /* Binary indexed tree (BIT) that describes cumulative key frequencies up until given dict-index. */
+    // lut 就是 lookup table
+    // 哈希表的核心结构是一个桶数组，每个桶(bucket)存储具有相同哈希值的键值对
     size_t overhead_hashtable_lut;         /* The overhead of all dictionaries. */
     size_t overhead_hashtable_rehashing;   /* The overhead of dictionaries rehashing. */
     void *metadata[];                      /* conditionally allocated based on "flags" */
@@ -122,6 +124,7 @@ static unsigned long long cumulativeKeyCountRead(kvstore *kvs, int didx) {
     return sum;
 }
 
+// 将字典索引编码到游标中
 static void addDictIndexToCursor(kvstore *kvs, int didx, unsigned long long *cursor) {
     if (kvs->num_dicts == 1)
         return;
@@ -131,6 +134,8 @@ static void addDictIndexToCursor(kvstore *kvs, int didx, unsigned long long *cur
     *cursor = (*cursor << kvs->num_dicts_bits) | didx;
 }
 
+// addDictIndexToCursor 是将 didx 保存到 cursor
+// getAndClearDictIndexFromCursor 是取出 cursor
 static int getAndClearDictIndexFromCursor(kvstore *kvs, unsigned long long *cursor) {
     if (kvs->num_dicts == 1)
         return 0;
@@ -206,7 +211,14 @@ static dict *createDictIfNeeded(kvstore *kvs, int didx) {
  *
  * Note that for rehashing dicts, that is, in the case of safe iterators
  * and Scan, we won't delete the dict. We will check whether it needs
- * to be deleted when we're releasing the iterator. */
+ * to be deleted when we're releasing the iterator.
+ *
+ * 1. 没有设置 KVSTORE_FREE_EMPTY_DICTS
+ * 2. didx 位置的字典为空
+ * 3. didx 位置的字典有值
+ * 4. didx 位置的字典暂停 rehashing
+ * 以上条件直接返回
+ * */
 static void freeDictIfNeeded(kvstore *kvs, int didx) {
     if (!(kvs->flags & KVSTORE_FREE_EMPTY_DICTS) ||
         !kvstoreGetDict(kvs, didx) ||
@@ -231,11 +243,16 @@ static void freeDictIfNeeded(kvstore *kvs, int didx) {
 static void kvstoreDictRehashingStarted(dict *d) {
     kvstore *kvs = d->type->userdata;
     kvstoreDictMetaBase *metadata = (kvstoreDictMetaBase *)dictMetadata(d);
+    // 添加正在 rehashing 的 dict 到 kvs->rehashing
     listAddNodeTail(kvs->rehashing, d);
+    //在字典元数据中保存指向链表节点的引用，便于后续快速删除
     metadata->rehashing_node = listLast(kvs->rehashing);
 
     unsigned long long from, to;
+    // from 表0 的 bucket 大小
+    // to 表1 的 bucket 大小
     dictRehashingInfo(d, &from, &to);
+    // 更新 kvstore 的桶计数：增加新哈希表的大小
     kvs->bucket_count += to; /* Started rehashing (Add the new ht size) */
     kvs->overhead_hashtable_lut += to;
     kvs->overhead_hashtable_rehashing += from;
@@ -249,6 +266,7 @@ static void kvstoreDictRehashingCompleted(dict *d) {
     kvstore *kvs = d->type->userdata;
     kvstoreDictMetaBase *metadata = (kvstoreDictMetaBase *)dictMetadata(d);
     if (metadata->rehashing_node) {
+        // 删除链表中指定的节点
         listDelNode(kvs->rehashing, metadata->rehashing_node);
         metadata->rehashing_node = NULL;
     }
@@ -288,7 +306,8 @@ kvstore *kvstoreCreate(dictType *type, int num_dicts_bits, int flags) {
     /* Conditionally calc also histogram size */
     if (flags & KVSTORE_ALLOC_META_KEYS_HIST) 
         kvsize += sizeof(kvstoreMetadata);
-    
+
+    // 为 kvstore 分配内存
     kvstore *kvs = zcalloc(kvsize);
     memcpy(&kvs->dtype, type, sizeof(kvs->dtype));
     kvs->flags = flags;
@@ -299,12 +318,16 @@ kvstore *kvstoreCreate(dictType *type, int num_dicts_bits, int flags) {
     assert(!type->dictMetadataBytes);
     assert(!type->rehashingStarted);
     assert(!type->rehashingCompleted);
+    // dict 的 dtype 初始化
     kvs->dtype.userdata = kvs;
+    // 设置元数据的大小
     if (flags & KVSTORE_ALLOC_META_KEYS_HIST)
         kvs->dtype.dictMetadataBytes = kvstoreDictMetadataExtendSize;
     else
         kvs->dtype.dictMetadataBytes = kvstoreDictMetaBaseSize;
+    // rehashing 开始时执行调用函数
     kvs->dtype.rehashingStarted = kvstoreDictRehashingStarted;
+    // rehashing 执行完成后调用函数
     kvs->dtype.rehashingCompleted = kvstoreDictRehashingCompleted;
 
     kvs->num_dicts_bits = num_dicts_bits;
@@ -339,6 +362,7 @@ void kvstoreEmpty(kvstore *kvs, void(callback)(dict*)) {
             kvstoreDictMetaEx *metaExt = (kvstoreDictMetaEx *) metadata;
             memset(&metaExt->meta.keysizes_hist, 0, sizeof(metaExt->meta.keysizes_hist));
         }
+        // 清空 dict
         dictEmpty(d, callback);
         freeDictIfNeeded(kvs, didx);
     }
@@ -378,6 +402,7 @@ void kvstoreRelease(kvstore *kvs) {
 }
 
 // NOTE: 这里是否可以添加 likely 来优化
+// 返回字典键的数量
 unsigned long long int kvstoreSize(kvstore *kvs) {
     if (kvs->num_dicts != 1) {
         return kvs->key_count;
@@ -405,6 +430,7 @@ size_t kvstoreMemUsage(kvstore *kvs) {
         metaSize = sizeof(kvstoreDictMetaEx);
     
     unsigned long long keys_count = kvstoreSize(kvs);
+    // dictEntryMemUsage() 只统计了 dictEntry 结构体本身的大小
     mem += keys_count * dictEntryMemUsage() +
            kvstoreBuckets(kvs) * sizeof(dictEntry*) +
            kvs->allocated_dicts * (sizeof(dict) + metaSize);
@@ -420,13 +446,18 @@ size_t kvstoreMemUsage(kvstore *kvs) {
 
 /*
  * This method is used to iterate over the elements of the entire kvstore specifically across dicts.
- * It's a three pronged approach.
+ * It's a three pronged approach. 三个方面的措施
  *
  * 1. It uses the provided cursor `cursor` to retrieve the dict index from it.
- * 2. If the dictionary is in a valid state checked through the provided callback `dictScanValidFunction`,
+ *  note: 这里的 dictScanValidFunction 应该是 kvstoreScanShouldSkipDict
+ * 2. If the dictionary is in a valid state checked through the provided callback dictScanValidFunction``,
  *    it performs a dictScan over the appropriate `keyType` dictionary of `db`.
  * 3. If the dict is entirely scanned i.e. the cursor has reached 0, the next non empty dict is discovered.
  *    The dict information is embedded into the cursor and returned.
+ *
+ * 1. 使用提供的游标(cursor)来检索字典索引
+ * 2.
+ * 3. 如果 dict 遍历后, cursor 变为0 ,会获取下一个非空字典, 该字典的信息会嵌入游标并返回
  *
  * To restrict the scan to a single dict, pass a valid dict index as
  * 'onlydidx', otherwise pass -1.
@@ -440,13 +471,21 @@ unsigned long long kvstoreScan(kvstore *kvs, unsigned long long cursor,
     /* During dictionary traversal, 48 upper bits in the cursor are used for positioning in the HT.
      * Following lower bits are used for the dict index number, ranging from 0 to 2^num_dicts_bits-1.
      * Dict index is always 0 at the start of iteration and can be incremented only if there are
-     * multiple dicts. */
+     * multiple dicts.
+     *
+     * 游标被设计为包含两个部分：
+     *   - 高位部分(48位): 用于哈希表内部定位
+     *   - 低位部分: 用于存储字典索引信息
+     * 当 onlydidx >= 0 时，表示只扫描指定索引的字典，而不扫描其他字典。
+     */
     int didx = getAndClearDictIndexFromCursor(kvs, &cursor);
     if (onlydidx >= 0) {
+        // 如果当前字典索引小于目标索引，会快速跳转到指定字典
         if (didx < onlydidx) {
             /* Fast-forward to onlydidx. */
             assert(onlydidx < kvs->num_dicts);
             didx = onlydidx;
+            // 重置游标 cursor = 0，从该字典的开始位置扫描
             cursor = 0;
         } else if (didx > onlydidx) {
             /* The cursor is already past onlydidx. */
@@ -456,21 +495,33 @@ unsigned long long kvstoreScan(kvstore *kvs, unsigned long long cursor,
 
     dict *d = kvstoreGetDict(kvs, didx);
 
+    /*
+     * 确定是否应该跳过当前字典的扫描，有两种情况会跳过：
+     * 1.!d: 字典指针为空，表示该字典不存在
+     * 2.(skip_cb && skip_cb(d)): 提供了跳过回调函数且回调函数返回真值
+     * 如 skip_cb= isExpiryDictValidForSamplingCb 时
+     */
     int skip = !d || (skip_cb && skip_cb(d));
     if (!skip) {
         _cursor = dictScan(d, cursor, scan_cb, privdata);
         /* In dictScan, scan_cb may delete entries (e.g., in active expire case). */
         freeDictIfNeeded(kvs, didx);
     }
-    /* scanning done for the current dictionary or if the scanning wasn't possible, move to the next dict index. */
+    /* scanning done for the current dictionary or if the scanning wasn't possible, move to the next dict index.
+     * _cursor == 0 时说明当前字典遍历结束
+     */
     if (_cursor == 0 || skip) {
         if (onlydidx >= 0)
             return 0;
+        // 获取下一个非空字典的索引
         didx = kvstoreGetNextNonEmptyDictIndex(kvs, didx);
     }
     if (didx == -1) {
         return 0;
     }
+    // _cursor !=0, 说明 didx 指向的字典还没有遍历结束
+    // 但游标 _cursor 已经发生变化,下次遍历时用这个游标处理
+    // 这里对游标和索引进行编码操作
     addDictIndexToCursor(kvs, didx, &_cursor);
     return _cursor;
 }
@@ -484,10 +535,19 @@ unsigned long long kvstoreScan(kvstore *kvs, unsigned long long cursor,
  * The return code is either `DICT_OK`/`DICT_ERR` for both the API(s).
  * `DICT_OK` response is for successful expansion. However, `DICT_ERR` response signifies failure in allocation in
  * `dictTryExpand` call and in case of `dictExpand` call it signifies no expansion was performed.
+ *
+ * try_expand = 1: 使用 dictTryExpand
+ *   尝试扩展字典，如果内存不足则返回失败
+ *   不会阻塞，适用于对响应时间敏感的场景
+ *  try_expand = 0: 使用 dictExpand
+ *   强制扩展字典，可能会阻塞直到成功
+ *   适用于后台操作或可以接受延迟的场景
  */
 int kvstoreExpand(kvstore *kvs, uint64_t newsize, int try_expand, kvstoreExpandShouldSkipDictIndex *skip_cb) {
     for (int i = 0; i < kvs->num_dicts; i++) {
         dict *d = kvstoreGetDict(kvs, i);
+        // skip_cb = dbExpandSkipSlot 判断指定的字典是否适合扩容
+        // 如果字典不存在或者回调函数指示跳过该字典，则继续处理下一个字典。
         if (!d || (skip_cb && skip_cb(i)))
             continue;
         int result = try_expand ? dictTryExpand(d, newsize) : dictExpand(d, newsize);
@@ -502,21 +562,28 @@ int kvstoreExpand(kvstore *kvs, uint64_t newsize, int try_expand, kvstoreExpandS
  * This function guarantees that it returns a dict-index of a non-empty dict, unless the entire kvstore is empty.
  * Time complexity of this function is O(log(kvs->num_dicts)). */
 int kvstoreGetFairRandomDictIndex(kvstore *kvs) {
+    // 随机获取一个索引值
     unsigned long target = kvstoreSize(kvs) ? (randomULong() % kvstoreSize(kvs)) + 1 : 0;
+    // 返回这个随机值所处字典的索引
     return kvstoreFindDictIndexByKeyIndex(kvs, target);
 }
 
+// 将 kvstore 下所有字典的统计信息写到 buf 中
 void kvstoreGetStats(kvstore *kvs, char *buf, size_t bufsize, int full) {
     buf[0] = '\0';
 
     size_t l;
     char *orig_buf = buf;
     size_t orig_bufsize = bufsize;
+    // 主 hash 表的统计信息
     dictStats *mainHtStats = NULL;
+    // 1号 hash 表统计信息
     dictStats *rehashHtStats = NULL;
     dict *d;
     kvstoreIterator *kvs_it = kvstoreIteratorInit(kvs);
+    // 遍历每个字典获取统计信息
     while ((d = kvstoreIteratorNextDict(kvs_it))) {
+        // 获取指定 hash 表的统计信息
         dictStats *stats = dictGetStatsHt(d, 0, full);
         if (!mainHtStats) {
             mainHtStats = stats;
@@ -525,7 +592,8 @@ void kvstoreGetStats(kvstore *kvs, char *buf, size_t bufsize, int full) {
             dictFreeStats(stats);
         }
         if (dictIsRehashing(d)) {
-            stats = dictGetStatsHt(d, 1, full);
+            // 如果正在 rehashing , 统计 1 号 hash 表的信息
+             stats = dictGetStatsHt(d, 1, full);
             if (!rehashHtStats) {
                 rehashHtStats = stats;
             } else {
@@ -537,6 +605,7 @@ void kvstoreGetStats(kvstore *kvs, char *buf, size_t bufsize, int full) {
     kvstoreIteratorRelease(kvs_it);
 
     if (mainHtStats && bufsize > 0) {
+        // 将统计信息写到 buf 中
         l = dictGetStatsMsg(buf, bufsize, mainHtStats, full);
         dictFreeStats(mainHtStats);
         buf += l;
@@ -688,10 +757,12 @@ dict *kvstoreIteratorNextDict(kvstoreIterator *kvs_it) {
     }
 
     kvs_it->didx = kvs_it->next_didx;
+    // 获得下一个非空字典的索引
     kvs_it->next_didx = kvstoreGetNextNonEmptyDictIndex(kvs_it->kvs, kvs_it->didx);
     return kvs_it->kvs->dicts[kvs_it->didx];
 }
 
+// 根据 kvstoreIterator 迭代器获取当前字典的索引
 int kvstoreIteratorGetCurrentDictIndex(kvstoreIterator *kvs_it) {
     assert(kvs_it->didx >= 0 && kvs_it->didx < kvs_it->kvs->num_dicts);
     return kvs_it->didx;
@@ -700,6 +771,7 @@ int kvstoreIteratorGetCurrentDictIndex(kvstoreIterator *kvs_it) {
 /* Returns next entry. */
 dictEntry *kvstoreIteratorNext(kvstoreIterator *kvs_it) {
     dictEntry *de = kvs_it->di.d ? dictNext(&kvs_it->di) : NULL;
+    // de 为空是才执行 if 语句
     if (!de) { /* No current dict or reached the end of the dictionary. */
 
         /* Before we move to the next dict, function kvstoreIteratorNextDict()
@@ -743,11 +815,19 @@ uint64_t kvstoreIncrementallyRehash(kvstore *kvs, uint64_t threshold_us) {
         return 0;
 
     /* Our goal is to rehash as many dictionaries as we can before reaching threshold_us,
-     * after each dictionary completes rehashing, it removes itself from the list. */
+     * after each dictionary completes rehashing, it removes itself from the list.
+     *
+     * 在 threshold_us 内尽可能多的进行 rehash
+     * 字典完成重哈希后会自动从重哈希列表中移除(kvstoreDictRehashingCompleted)
+     */
     listNode *node;
     monotime timer;
     uint64_t elapsed_us = 0;
     elapsedStart(&timer);
+    // kvs->rehashing 就是 adlist,存储所有正在进行 rehashing 的 dict
+    // 这里取出头节点, node->value 是 dict
+    // 当字典完成重哈希后，会自动调用回调函数 kvstoreDictRehashingCompleted，
+    // 从重哈希列表中移除该字典。因此下次循环时 listFirst 会返回下一个重哈希字典
     while ((node = listFirst(kvs->rehashing))) {
         dictRehashMicroseconds(listNodeValue(node), threshold_us - elapsed_us);
 
@@ -877,7 +957,11 @@ unsigned long kvstoreDictScanDefrag(kvstore *kvs, int didx, unsigned long v, dic
  * cursor value of 0 should be provided.  The return value is an updated cursor which should be
  * provided on the next iteration.  The operation is complete when 0 is returned.
  *
- * The 'defragfn' callback is called with a reference to the dict that callback can reallocate. */
+ * The 'defragfn' callback is called with a reference to the dict that callback can reallocate.
+ *
+ * cursor 用来进行迭代操作, 第一次调用时初始化为0
+ * 函数的返回值会更新 cursor, 作为下一次调用的参数
+ */
 unsigned long kvstoreDictLUTDefrag(kvstore *kvs, unsigned long cursor, kvstoreDictLUTDefragFunction *defragfn) {
     for (int didx = cursor; didx < kvs->num_dicts; didx++) {
         dict **d = kvstoreGetDictRef(kvs, didx), *newd;
@@ -1066,6 +1150,7 @@ int kvstoreTest(int argc, char **argv, int flags) {
 
     TEST("kvstoreIterator case 1: removing all keys does not delete the empty dict") {
         kvs_it = kvstoreIteratorInit(kvs1);
+        // 这里返回的是一个字典实例
         while((de = kvstoreIteratorNext(kvs_it)) != NULL) {
             curr_slot = kvstoreIteratorGetCurrentDictIndex(kvs_it);
             key = dictGetKey(de);
@@ -1111,7 +1196,9 @@ int kvstoreTest(int argc, char **argv, int flags) {
     }
 
     TEST("kvstoreDictIterator case 1: removing all keys does not delete the empty dict") {
+        // 获取指定索引字典的迭代器
         kvs_di = kvstoreGetDictSafeIterator(kvs1, didx);
+        // 针对单个字典进行迭代
         while((de = kvstoreDictIteratorNext(kvs_di)) != NULL) {
             key = dictGetKey(de);
             assert(kvstoreDictDelete(kvs1, didx, key) == DICT_OK);
@@ -1143,6 +1230,7 @@ int kvstoreTest(int argc, char **argv, int flags) {
         kvstore *kvs = kvstoreCreate(&KvstoreDictTestType, 0, KVSTORE_ALLOCATE_DICTS_ON_DEMAND);
         for (i = 0; i < 256; i++) {
             de = kvstoreDictAddRaw(kvs, 0, stringFromInt(i), NULL);
+            //进行 rehashing 的字典数量大于1时就跳出
             if (listLength(kvs->rehashing)) break;
         }
         assert(listLength(kvs->rehashing));

@@ -1121,7 +1121,9 @@ void scanCallback(void *privdata, const dictEntry *de) {
         key = keyStr;
         val = dictGetVal(de);
 
-        /* If field is expired, then ignore */
+        /* If field is expired, then ignore
+         * 如果键已过期, 直接忽略
+         */
         if (hfieldIsExpired(key))
             return;
 
@@ -1134,6 +1136,7 @@ void scanCallback(void *privdata, const dictEntry *de) {
         serverPanic("Type not handled in SCAN callback.");
     }
 
+    // 将从 dict 读取的 key, val 添加到 list 中
     listAddNodeTail(keys, key);
     if (val && !data->no_values) listAddNodeTail(keys, val);
 }
