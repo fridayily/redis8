@@ -47,6 +47,22 @@ set(REDIS_DICT_SOURCES
         ${REDIS_SRC}/src/sha256.c
 )
 
+set(REDIS_RAX_SOURCES
+        ${REDIS_SRC}/src/rax.c
+        ${REDIS_SRC}/src/crc16.c
+        ${REDIS_SRC}/src/zmalloc.c
+#        ${REDIS_SRC}/src/util.c
+#        ${REDIS_SRC}/src/monotonic.c
+#        ${REDIS_SRC}/src/mt19937-64.c
+#        ${REDIS_SRC}/src/sds.c
+#        ${REDIS_SRC}/deps/fpconv/fpconv_dtoa.c
+#        ${REDIS_SRC}/deps/fast_float/fast_float_strtod.cpp
+#        ${REDIS_SRC}/src/sha256.c
+)
+#add_definitions(-DRAX_DEBUG_MSG=0)
+add_executable(rax-test rax-test.c ${REDIS_RAX_SOURCES})
+target_link_libraries(rax-test m pthread)
+
 set(TEST_ZSET_SOURCES
         test_t_zset.c
         ${REDIS_SRC}/src/sds.c

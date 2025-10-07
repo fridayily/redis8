@@ -35,8 +35,8 @@
 #define UNUSED(V) ((void) V)
 
 struct _kvstore {
-    int flags;
-    dictType dtype;
+    int flags;  /* 控制是否立即创建字典、删除字典的行为、元数据类型  */
+    dictType dtype; /* 字典创建、rehashing、hashing 的函数 */
     dict **dicts;
     long long num_dicts;
     long long num_dicts_bits;
@@ -73,10 +73,13 @@ struct _kvstoreDictIterator {
     dictIterator di;
 };
 
-/* Basic metadata allocated per dict */
+/* Basic metadata allocated per dict
+ * note: 与 kvstoreMetadata 不同
+ */
 typedef struct {
     listNode *rehashing_node;   /* list node in rehashing list */
 } kvstoreDictMetaBase;
+
 
 /* Conditionally metadata allocated per dict (specifically for keysizes histogram) */
 typedef struct {
@@ -333,6 +336,8 @@ kvstore *kvstoreCreate(dictType *type, int num_dicts_bits, int flags) {
     kvs->num_dicts_bits = num_dicts_bits;
     kvs->num_dicts = 1 << kvs->num_dicts_bits;
     kvs->dicts = zcalloc(sizeof(dict*) * kvs->num_dicts);
+    // 如果没有设置 KVSTORE_ALLOCATE_DICTS_ON_DEMAND 立即创建所有字典
+    // 设置了就 按需创建
     if (!(kvs->flags & KVSTORE_ALLOCATE_DICTS_ON_DEMAND)) {
         // 创建 num_dicts 个 dict
         for (int i = 0; i < kvs->num_dicts; i++)

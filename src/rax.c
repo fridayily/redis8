@@ -130,7 +130,10 @@ static inline void raxStackFree(raxStack *ts) {
 #define raxPadding(nodesize) ((sizeof(void*)-(((nodesize)+4) % sizeof(void*))) & (sizeof(void*)-1))
 
 /* Return the pointer to the last child pointer in a node. For the compressed
- * nodes this is the only child pointer. */
+ * nodes this is the only child pointer.
+ *
+ * 用于获取 rax 节点的最后一个子节点指针的地址
+ */
 #define raxNodeLastChildPtr(n) ((raxNode**) ( \
     ((char*)(n)) + \
     raxNodeCurrentLength(n) - \
@@ -156,7 +159,7 @@ static inline void raxStackFree(raxStack *ts) {
 
 /* Allocate a new non compressed node with the specified number of children.
  * If datafield is true, the allocation is made large enough to hold the
- * associated data pointer.
+ * associated data pointer.  如果设置了 datafield, 扩充一个 data 指针的空间
  * Returns the new node pointer. On out of memory NULL is returned. */
 raxNode *raxNewNode(size_t children, int datafield) {
     size_t nodesize = sizeof(raxNode)+children+raxPadding(children)+
@@ -193,18 +196,34 @@ rax *raxNewWithMetadata(int metaSize) {
 }
 
 /* realloc the node to make room for auxiliary data in order
- * to store an item in that node. On out of memory NULL is returned. */
+ * to store an item in that node. On out of memory NULL is returned.
+ * 为 data 分配存储空间, 一个指针的空间
+ */
 raxNode *raxReallocForData(raxNode *n, void *data) {
     if (data == NULL) return n; /* No reallocation needed, setting isnull=1 */
     size_t curlen = raxNodeCurrentLength(n);
     return rax_realloc(n,curlen+sizeof(void*));
 }
 
-/* Set the node auxiliary data to the specified pointer. */
+/* Set the node auxiliary data to the specified pointer.
+ * 如果 data 是数字, data = 0x1
+ * memcpy(ndata,&data,sizeof(data)) 会将 &data 地址的数据复制到 ndata 处
+ *
+ * 如果 data 是字符串, data 是一个地址 0xaabbccdd,这个地址指向真正的数据
+ * memcpy(ndata,&data,sizeof(data)) 会将 &data 地址的值 0xaabbccdd复制到 ndata 处
+ *
+ * 因此如果 data 是整数,raxNode 末尾存储的就是数字
+ * 如果 data 是字符串, raxNode 末尾存储的就是字符串地址
+ */
 void raxSetData(raxNode *n, void *data) {
     n->iskey = 1;
     if (data != NULL) {
         n->isnull = 0;
+        /* 计算数据指针的存储位置
+         * [节点头][key][padding][childPtr][dataPtr]
+         * ndata 的指向dataPtr 开始的地方
+         * (void**) - 将该地址转换为 void** 类型，即指向 void 指针的指针
+         */
         void **ndata = (void**)
             ((char*)n+raxNodeCurrentLength(n)-sizeof(void*));
         memcpy(ndata,&data,sizeof(data));
@@ -400,6 +419,8 @@ raxNode *raxCompressNode(raxNode *n, unsigned char *s, size_t len, raxNode **chi
     n->size = len;
     memcpy(n->data,s,len);
     if (n->iskey) raxSetData(n,data);
+    // 用于获取 n 节点的最后一个子节点指针的地址, 注意这里使用双指针, 是因为之后会将 child 指针写到
+    // childfield 指向的位置
     raxNode **childfield = raxNodeLastChildPtr(n);
     memcpy(childfield,child,sizeof(*child));
     return n;
@@ -440,6 +461,10 @@ static inline size_t raxLowWalk(rax *rax, unsigned char *s, size_t len, raxNode 
 
     size_t i = 0; /* Position in the string. */
     size_t j = 0; /* Position in the node children (or bytes if compressed).*/
+
+    /**
+     * 根据字符串 s 逐级遍历 rax 树
+     */
     while(h->size && i < len) {
         debugnode("Lookup current node",h);
         unsigned char *v = h->data;
@@ -452,7 +477,11 @@ static inline size_t raxLowWalk(rax *rax, unsigned char *s, size_t len, raxNode 
         } else {
             /* Even when h->size is large, linear scan provides good
              * performances compared to other approaches that are in theory
-             * more sounding, like performing a binary search. */
+             * more sounding, like performing a binary search.
+             *
+             * 在 rax 树中查找子节点时，即使节点有很多子节点，代码仍然选择使用线性扫描而
+             * 不是二分查找，因为实际测试中线性扫描的性能表现更好
+             */
             for (j = 0; j < h->size; j++) {
                 if (v[j] == s[i]) break;
             }
@@ -461,9 +490,26 @@ static inline size_t raxLowWalk(rax *rax, unsigned char *s, size_t len, raxNode 
         }
 
         if (ts) raxStackPush(ts,h); /* Save stack of parent nodes. */
+        // 子节点数组, 这里取第一个元素的地址
+        //  [childPtr0][childPtr1][childPtr2]
         raxNode **children = raxNodeFirstChildPtr(h);
         if (h->iscompr) j = 0; /* Compressed node only child is at index 0. */
+
+        /*
+         * 将第 j 个子节点指针复制到变量 h 中
+         * h 初始指向的是 head 节点
+         * 这里切换到第 j 个子节点, 下次遍历时会开始遍历这个节点
+         *
+         * [header0][a][b][a_ptr][b_ptr][value_ptr]
+         *                   |
+         *                [header1][c][d][c_ptr][d_ptr][value_ptr]
+         *                                 |
+         *                               [header2]
+         *   第一次循环时 h 指向 header0
+         *   第二次循环时 h 指向 header1
+         * */
         memcpy(&h,children+j,sizeof(h));
+        // 保存当前子节点指针在数组中的位置
         parentlink = children+j;
         j = 0; /* If the new node is non compressed and we do not
                   iterate again (since i == len) set the split
@@ -483,6 +529,10 @@ static inline size_t raxLowWalk(rax *rax, unsigned char *s, size_t len, raxNode 
  * otherwise the element is inserted and 1 is returned. On out of memory the
  * function returns 0 as well but sets errno to ENOMEM, otherwise errno will
  * be set to 0.
+ *
+ * 插入长度为 len 的元素 s, 并将指针'data'设置为辅助数据。
+ * 如果元素已经存在，则更新关联的数据（仅当'overwrite'设置为1时），并返回0，否则插入元素并返回1。
+ * 当内存不足时，函数也返回0，但会将errno设置为ENOMEM，否则errno将被设置为0。
  */
 int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data, void **old, int overwrite) {
     size_t i;
@@ -493,6 +543,16 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data, void **
     raxNode *h, **parentlink;
 
     debugf("### Insert %.*s with value %p\n", (int)len, s, data);
+    /*
+    * inline static size_t raxLowWalk(
+    *   rax *rax,
+    *   unsigned char *s,
+    *   size_t len,
+    *   raxNode **stopnode,  查找停止的节点
+    *   raxNode ***plink,
+    *   int *splitpos,  如果停止在压缩节点中，返回在该节点内的位置
+    *   raxStack *ts)
+     */
     i = raxLowWalk(rax,s,len,&h,&parentlink,&j,NULL);
 
     /* If i == len we walked following the whole string. If we are not
@@ -687,7 +747,7 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data, void **
             if (h->iskey && !h->isnull) nodesize += sizeof(void*);
             trimmed = rax_malloc(nodesize);
         }
-
+        // postfixlen 后缀长度
         if (postfixlen) {
             nodesize = sizeof(raxNode)+postfixlen+raxPadding(postfixlen)+
                        sizeof(raxNode*);
@@ -715,7 +775,7 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data, void **
             }
             memcpy(parentlink,&splitnode,sizeof(splitnode));
         } else {
-            /* 3b: Trim the compressed node. */
+            /* 3b: Trim the compressed node. 裁剪压缩节点 */
             trimmed->size = j;
             memcpy(trimmed->data,h->data,j);
             trimmed->iscompr = j > 1 ? 1 : 0;
@@ -834,6 +894,7 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data, void **
             size_t comprsize = len-i;
             if (comprsize > RAX_NODE_MAX_SIZE)
                 comprsize = RAX_NODE_MAX_SIZE;
+            // raxCompressNode 中 h 是要插入数据的节点, 会为 child 分配空间
             raxNode *newh = raxCompressNode(h,s+i,comprsize,&child);
             if (newh == NULL) goto oom;
             h = newh;
@@ -853,10 +914,13 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data, void **
         rax->numnodes++;
         h = child;
     }
+    // 如果 data 是 0x00
+    // (void *) data = NULL, 不必分配存储空间
     raxNode *newh = raxReallocForData(h,data);
     if (newh == NULL) goto oom;
     h = newh;
     if (!h->iskey) rax->numele++;
+    // 写数据
     raxSetData(h,data);
     memcpy(parentlink,&h,sizeof(h));
     return 1; /* Element inserted. */
@@ -1814,7 +1878,7 @@ uint64_t raxSize(rax *rax) {
  * It shows an ASCII representation of a tree on standard output, outline
  * all the nodes and the contained keys.
  *
- * The representation is as follow:
+ * The representation is as follows:
  *
  *  "foobar" (compressed node)
  *  [abc] (normal node with three children)
