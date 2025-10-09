@@ -94,6 +94,8 @@ typedef struct raxNode {
      * Note how the character is not stored in the children but in the
      * edge of the parents:
      *
+     * 如果 iscompr=0, size=3 表示有3个字符(abc)和3个 raxNode 指针[a-ptr] [b-ptr] [c-ptr]
+     *
      * [header iscompr=0][abc][a-ptr][b-ptr][c-ptr](value-ptr?)
      *
      * if node is compressed (iscompr bit is 1) the node has 1 children.
@@ -102,6 +104,12 @@ typedef struct raxNode {
      * nodes linked one after the other, for which only the last one in
      * the sequence is actually represented as a node, and pointed to by
      * the current compressed node.
+     *
+     * 如果 iscompr=1, size=3 表示存在压缩节点且存在一个子节点
+     *     这种情况下 3个字节的数据直接写在 data[] 开始的位置, 代表一系列连续的节点
+     *     如下面的示例表示的就是 x->y->z
+     *     序列中只有最后一个节点会被实际创建为节点对象
+     *     而当前这个压缩节点会保存一个指针（或引用），指向这个最后节点
      *
      * [header iscompr=1][xyz][z-ptr](value-ptr?)
      *
@@ -113,6 +121,9 @@ typedef struct raxNode {
      * (isnull=0), then after the raxNode pointers pointing to the
      * children, an additional value pointer is present (as you can see
      * in the representation above as "value-ptr" field).
+     *
+     *  如果节点有关联的键（iskey=1）且不为NULL（isnull=0）
+     *  那么在指向子节点的raxNode指针之后，还会存在一个额外的值指针
      */
     unsigned char data[];
 } raxNode;

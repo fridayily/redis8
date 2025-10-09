@@ -711,57 +711,57 @@ int randomWalkTest(void) {
 }
 
 
-int randomWalkTest2(void) {
-  printf("     randomWalkTest2     \n");
-  rax *t = raxNew();
-  char *toadd[] = {"alligator", "alien",   "baloon",     "chromodynamic",
-                   "romane",    "romanus", "romulus",    "rubens",
-                   "ruber",     "rubicon", "rubicundus", "all",
-                   "rub",       "ba",      NULL};
-
-  char *values[] = {"alligator", "alien",   "baloon",     "chromodynamic",
-                 "romane",    "romanus", "romulus",    "rubens",
-                 "ruber",     "rubicon", "rubicundus", "all",
-                 "rub",       "ba",      NULL};
-
-  long numele;
-  for (numele = 0; toadd[numele] != NULL; numele++) {
-    printf("================== %s ========================\n",toadd[numele]);
-    //  toadd[numele] 是 key , numele 是 value
-    raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
-              values[numele], NULL);
-    raxShow(t);
-  }
-
-  raxIterator iter;
-  raxStart(&iter, t);
-  raxSeek(&iter, "^", NULL, 0);
-  int maxloops = 100000;
-  while (raxRandomWalk(&iter, 0) && maxloops--) {
-    int nulls = 0;
-    for (long i = 0; i < numele; i++) {
-      if (toadd[i] == NULL) {
-        nulls++;
-        continue;
-      }
-      if (strlen(toadd[i]) == iter.key_len &&
-          memcmp(toadd[i], iter.key, iter.key_len) == 0) {
-        toadd[i] = NULL;
-        nulls++;
-          }
-    }
-    if (nulls == numele)
-      break;
-  }
-  if (maxloops == 0) {
-    printf("randomWalkTest() is unable to report all the elements "
-           "after 100k iterations!\n");
-    return 1;
-  }
-  raxStop(&iter);
-  raxFree(t);
-  return 0;
-}
+// int randomWalkTest2(void) {
+//   printf("     randomWalkTest2     \n");
+//   rax *t = raxNew();
+//   char *toadd[] = {"alligator", "alien",   "baloon",     "chromodynamic",
+//                    "romane",    "romanus", "romulus",    "rubens",
+//                    "ruber",     "rubicon", "rubicundus", "all",
+//                    "rub",       "ba",      NULL};
+//
+//   char *values[] = {"alligator", "alien",   "baloon",     "chromodynamic",
+//                  "romane",    "romanus", "romulus",    "rubens",
+//                  "ruber",     "rubicon", "rubicundus", "all",
+//                  "rub",       "ba",      NULL};
+//
+//   long numele;
+//   for (numele = 0; toadd[numele] != NULL; numele++) {
+//     printf("================== %s ========================\n",toadd[numele]);
+//     //  toadd[numele] 是 key , numele 是 value
+//     raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
+//               values[numele], NULL);
+//     raxShow(t);
+//   }
+//
+//   raxIterator iter;
+//   raxStart(&iter, t);
+//   raxSeek(&iter, "^", NULL, 0);
+//   int maxloops = 100000;
+//   while (raxRandomWalk(&iter, 0) && maxloops--) {
+//     int nulls = 0;
+//     for (long i = 0; i < numele; i++) {
+//       if (toadd[i] == NULL) {
+//         nulls++;
+//         continue;
+//       }
+//       if (strlen(toadd[i]) == iter.key_len &&
+//           memcmp(toadd[i], iter.key, iter.key_len) == 0) {
+//         toadd[i] = NULL;
+//         nulls++;
+//           }
+//     }
+//     if (nulls == numele)
+//       break;
+//   }
+//   if (maxloops == 0) {
+//     printf("randomWalkTest() is unable to report all the elements "
+//            "after 100k iterations!\n");
+//     return 1;
+//   }
+//   raxStop(&iter);
+//   raxFree(t);
+//   return 0;
+// }
 
 
 int iteratorUnitTests(void) {
@@ -1176,10 +1176,10 @@ int main(int argc, char **argv) {
   if (do_units) {
     printf("Unit tests: \n");
     fflush(stdout);
-    // if (randomWalkTest())
-    //   errors++;
-    if (randomWalkTest2())
+    if (randomWalkTest())
       errors++;
+    // if (randomWalkTest2())
+    //   errors++;
     if (iteratorUnitTests())
       errors++;
     if (tryInsertUnitTests())
