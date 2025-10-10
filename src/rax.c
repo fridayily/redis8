@@ -249,9 +249,18 @@ void *raxGetData(raxNode *n) {
  * the new child was stored, which is useful for the caller to replace the
  * child pointer if it gets reallocated.
  *
+ *  向节点 n 添加一个表示字符 'c' 的新子节点, 并返回新的 n 指针, 同时通过引用返回子节点指针
+ *  此外 '***parentlink' 会被填充为新子节点存储位置的 raxNode 指针的指针
+ *  这对于调用者在子节点重新分配时替换子节点指针很有用。
+ *
  * On success the new parent node pointer is returned (it may change because
  * of the realloc, so the caller should discard 'n' and use the new value).
- * On out of memory NULL is returned, and the old node is still valid. */
+ * On out of memory NULL is returned, and the old node is still valid.
+ *
+ * 成功时返回新的父节点指针
+ * (由于 realloc 操作，它可能会改变，所以调用者应该丢弃 'n' 并使用新值)
+ * 内存不足时返回 NULL，但旧节点仍然有效。
+ */
 raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr,
                      raxNode ***parentlink) {
   assert(n->iscompr == 0);
@@ -281,6 +290,10 @@ raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr,
    * child, plus the padding needed in order to store addresses into aligned
    * locations.
    *
+   *  重新分配内存后，我们在末尾有最多8/16字节（取决于系统指针大小和所需的节点填充），
+   *  即'data'部分中的额外字符，加上指向新子节点的指针，
+   *  以及为了将地址存储到对齐位置所需的填充字节。
+   *
    * So if we start with the following node, having "abde" edges.
    *
    * Note:
@@ -297,12 +310,18 @@ raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr,
    *
    * (Blank bytes are represented by ".")
    *
+   *  要添加一个新的边字符, 需要增加 1 个字节存储字符 + 一个子节点指针 + padding 字符
+   *  故下面是 8 个点 (32 bit 机器)
    * [HDR*][abde][Aptr][Bptr][Dptr][Eptr]|AUXP|[....][....]
    *
    * Let's find where to insert the new child in order to make sure
    * it is inserted in-place lexicographically. Assuming we are adding
    * a child "c" in our case pos will be = 2 after the end of the following
-   * loop. */
+   * loop.
+   * 这里是 will be, 不是 be =2 , 是 pos =2
+   * 让我们找到插入新子节点的位置，以确保它是按字典序就地插入的。
+   * 假设我们正在添加子节点"c" 到 abde，在以下循环结束后，pos将等于2。
+   */
   int pos;
   for (pos = 0; pos < n->size; pos++) {
     if (n->data[pos] > c)
@@ -314,6 +333,9 @@ raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr,
    * We will obtain something like that:
    *
    * [HDR*][abde][Aptr][Bptr][Dptr][Eptr][....][....]|AUXP|
+   *
+   * 如果节点包含辅助数据（auxiliary data），需要将其指针移到节点内存的末尾
+   * 这样做可以避免在后续操作中意外覆盖辅助数据指针
    */
   unsigned char *src, *dst;
   if (n->iskey && !n->isnull) {
@@ -328,11 +350,23 @@ raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr,
    * would be always "1", since we are adding a single byte in the string
    * section of the node (where now there is "abde" basically).
    *
+   * 计算需要将指针部分向前移动多少字节(右移)，这是因为新增加的子节点字节导致字符串部分增长
+   * 无padding的情况：如果没有padding，这个值通常为"1"，
+   * 因为我们在节点的字符串部分只增加了一个字节（在示例中是"abde"）
+   *
    * However we have padding, so it could be zero, or up to 8.
    *
    * Another way to think at the shift is, how many bytes we need to
    * move child pointers forward *other than* the obvious sizeof(void*)
-   * needed for the additional pointer itself. */
+   * needed for the additional pointer itself.
+   *
+   * hift 的另一种理解方式：shift 值表示除了为新指针本身需要的 sizeof(void*) 空间之外，
+   * 还需要将子节点指针向前移动多少字节
+   *
+   * 这里的 *other than* 表示：
+   *    除了为新指针本身所需的 sizeof(void*) 空间之外
+   *    还需要将子节点指针向前移动多少字节
+   * */
   size_t shift = newlen - curlen - sizeof(void *);
 
   /* We said we are adding a node with edge 'c'. The insertion
@@ -479,12 +513,12 @@ static inline size_t raxLowWalk(rax *rax, unsigned char *s, size_t len,
   while (h->size && i < len) {
     debugnode("Lookup current node", h);
     unsigned char *v = h->data;
-
+    // h 最开始是 rax->head ,下面的代码会切换节点改变 h
     if (h->iscompr) {
       for (j = 0; j < h->size && i < len; j++, i++) {
         if (v[j] != s[i])
           break;
-      }
+      } // 如果当前遍历的节点h是压缩节点, 且字符串与 h->data 有差异,则跳出 while 循环, 不再往下遍历节点
       if (j != h->size)
         break;
     } else {
@@ -762,7 +796,7 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data,
     size_t nodesize;
 
     /* 2: Create the split node. Also allocate the other nodes we'll need
-     *    ASAP, so that it will be simpler to handle OOM. */
+     *    ASAP, so that it will be simpler to handle OOM.  压缩节点只有一个子节点 */
     raxNode *splitnode = raxNewNode(1, split_node_is_key);
     // 这里要将一个节点在字符 trimmedlen 的位置拆分成2个节点
     // trimmed 是前一个节点, postfix 是后一个节点
@@ -811,10 +845,11 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data,
       if (h->iskey && !h->isnull) {
         void *ndata = raxGetData(h);
         raxSetData(trimmed, ndata);
-      } // cp 就是 childPtr
+      }
+      // cp 就是 childPtr
       raxNode **cp = raxNodeLastChildPtr(trimmed);
       memcpy(cp, &splitnode, sizeof(splitnode));
-      memcpy(parentlink, &trimmed, sizeof(trimmed));
+      memcpy(parentlink, &trimmed, sizeof(trimmed)); // parentlink 之前可以指向 rax->head, 现在修改 rax->head 为 trimmed
       parentlink = cp; /* Set parentlink to splitnode parent. */
       rax->numnodes++;
     }
@@ -842,7 +877,9 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data,
 
     /* 6. Continue insertion: this will cause the splitnode to
      * get a new child (the non common character at the currently
-     * inserted key). */
+     * inserted key).
+     *  h 节点已被拆分, 释放 h
+     */
     rax_free(h);
     h = splitnode;
   } else if (h->iscompr && i == len) {
@@ -928,16 +965,16 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data,
       if (newh == NULL)
         goto oom;
       h = newh;
-      printf("1.parentlink=%p *parentlink=%p, &h=%p\n",parentlink,*parentlink,&h);
+      // printf("1.parentlink=%p *parentlink=%p, &h=%p\n",parentlink,*parentlink,&h);
       // 更新父节点中指向子节点的指针值
       // 修改 parentlink 指向的内存位置的内容
       memcpy(parentlink, &h, sizeof(h));
-      printf("2.parentlink=%p *parentlink=%p\n",parentlink,*parentlink);
+      // printf("2.parentlink=%p *parentlink=%p\n",parentlink,*parentlink);
 
       // 重新设置 parentlink 指针，使其指向节点h的最后一个子节点指针位置
       // 为下一次循环迭代准备 parentlink，以便能够更新下一个层级的父节点引用
       parentlink = raxNodeLastChildPtr(h);
-      printf("3.parentlink=%p *parentlink=%p\n",parentlink,*parentlink);
+      // printf("3.parentlink=%p *parentlink=%p\n",parentlink,*parentlink);
 
       i += comprsize;
     } else {

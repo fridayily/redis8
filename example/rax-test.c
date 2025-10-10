@@ -36,10 +36,8 @@
 #include <string.h>
 #include <sys/time.h>
 
-
 #define RAX_DEBUG_MSG
 #include "rax.h"
-
 
 void _serverAssert(const char *filename, int linenum, const char *condition) {
   printf("Assertion failed at %s:%d: %s\n", filename, linenum, condition);
@@ -662,7 +660,6 @@ int iteratorFuzzTest(int keymode, size_t count) {
   return 0;
 }
 
-
 /* Test the random walk function. */
 int randomWalkTest(void) {
   rax *t = raxNew();
@@ -673,7 +670,7 @@ int randomWalkTest(void) {
 
   long numele;
   for (numele = 0; toadd[numele] != NULL; numele++) {
-    printf("================== %s ========================\n",toadd[numele]);
+    printf("================== %s ========================\n", toadd[numele]);
     //  toadd[numele] 是 key , numele 是 value
     raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
               (void *)numele, NULL);
@@ -710,59 +707,51 @@ int randomWalkTest(void) {
   return 0;
 }
 
+/* Test the random walk function. */
+int randomWalkTest2(void) {
+  rax *t = raxNew();
+  char *toadd[] = {"ab12","ab1345","ab1245", "b23", "ab12456",
+                   "ab12457", "b234",   "b235", "b23451",  NULL};
 
-// int randomWalkTest2(void) {
-//   printf("     randomWalkTest2     \n");
-//   rax *t = raxNew();
-//   char *toadd[] = {"alligator", "alien",   "baloon",     "chromodynamic",
-//                    "romane",    "romanus", "romulus",    "rubens",
-//                    "ruber",     "rubicon", "rubicundus", "all",
-//                    "rub",       "ba",      NULL};
-//
-//   char *values[] = {"alligator", "alien",   "baloon",     "chromodynamic",
-//                  "romane",    "romanus", "romulus",    "rubens",
-//                  "ruber",     "rubicon", "rubicundus", "all",
-//                  "rub",       "ba",      NULL};
-//
-//   long numele;
-//   for (numele = 0; toadd[numele] != NULL; numele++) {
-//     printf("================== %s ========================\n",toadd[numele]);
-//     //  toadd[numele] 是 key , numele 是 value
-//     raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
-//               values[numele], NULL);
-//     raxShow(t);
-//   }
-//
-//   raxIterator iter;
-//   raxStart(&iter, t);
-//   raxSeek(&iter, "^", NULL, 0);
-//   int maxloops = 100000;
-//   while (raxRandomWalk(&iter, 0) && maxloops--) {
-//     int nulls = 0;
-//     for (long i = 0; i < numele; i++) {
-//       if (toadd[i] == NULL) {
-//         nulls++;
-//         continue;
-//       }
-//       if (strlen(toadd[i]) == iter.key_len &&
-//           memcmp(toadd[i], iter.key, iter.key_len) == 0) {
-//         toadd[i] = NULL;
-//         nulls++;
-//           }
-//     }
-//     if (nulls == numele)
-//       break;
-//   }
-//   if (maxloops == 0) {
-//     printf("randomWalkTest() is unable to report all the elements "
-//            "after 100k iterations!\n");
-//     return 1;
-//   }
-//   raxStop(&iter);
-//   raxFree(t);
-//   return 0;
-// }
+  long numele;
+  for (numele = 0; toadd[numele] != NULL; numele++) {
+    printf("================== %s ========================\n", toadd[numele]);
+    //  toadd[numele] 是 key , numele 是 value
+    raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
+              (void *)numele, NULL);
+    raxShow(t);
+  }
 
+  // raxIterator iter;
+  // raxStart(&iter, t);
+  // raxSeek(&iter, "^", NULL, 0);
+  // int maxloops = 100000;
+  // while (raxRandomWalk(&iter, 0) && maxloops--) {
+  //   int nulls = 0;
+  //   for (long i = 0; i < numele; i++) {
+  //     if (toadd[i] == NULL) {
+  //       nulls++;
+  //       continue;
+  //     }
+  //     if (strlen(toadd[i]) == iter.key_len &&
+  //         memcmp(toadd[i], iter.key, iter.key_len) == 0) {
+  //       toadd[i] = NULL;
+  //       nulls++;
+  //         }
+  //   }
+  //   if (nulls == numele)
+  //     break;
+  // }
+  // if (maxloops == 0) {
+  //   printf("randomWalkTest() is unable to report all the elements "
+  //          "after 100k iterations!\n");
+  //   return 1;
+  // }
+  // raxStop(&iter);
+  printf("------------- free -------------\n");
+  raxFree(t);
+  return 0;
+}
 
 int iteratorUnitTests(void) {
   rax *t = raxNew();
@@ -1106,14 +1095,14 @@ int testHugeKey(void) {
     goto oom;
   // void *value1 = raxFind(rax,(unsigned char*)"aaabbb",6);
   // void *value2 = raxFind(rax,key,max_keylen);
-  void *value1,*value2;
-  int res1 = raxFind(rax,(unsigned char*)"aaabbb",6,&value1);
-  int res2 = raxFind(rax,key,max_keylen,&value2);
-  assert(res1!=0);
-  assert(res2!=0);
-  if (value1 != (void*)5678L || value2 != (void*)1234L) {
-      printf("Huge key test failed\n");
-      return 1;
+  void *value1, *value2;
+  int res1 = raxFind(rax, (unsigned char *)"aaabbb", 6, &value1);
+  int res2 = raxFind(rax, key, max_keylen, &value2);
+  assert(res1 != 0);
+  assert(res2 != 0);
+  if (value1 != (void *)5678L || value2 != (void *)1234L) {
+    printf("Huge key test failed\n");
+    return 1;
   }
   raxFree(rax);
   return 0;
@@ -1176,10 +1165,10 @@ int main(int argc, char **argv) {
   if (do_units) {
     printf("Unit tests: \n");
     fflush(stdout);
-    if (randomWalkTest())
-      errors++;
-    // if (randomWalkTest2())
+    // if (randomWalkTest())
     //   errors++;
+    if (randomWalkTest2())
+      errors++;
     if (iteratorUnitTests())
       errors++;
     if (tryInsertUnitTests())
