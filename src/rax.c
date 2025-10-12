@@ -264,7 +264,8 @@ void *raxGetData(raxNode *n) {
 raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr,
                      raxNode ***parentlink) {
   assert(n->iscompr == 0);
-
+  // 加入 n 中原本就有 1 个字符, 加上 4 个字符 header, 会扩充 3 个字节,
+  // 再添加一个字符时会占用 padding 的其中一个字节, 因此新增一个字符只会增加一个子节点指针的长度
   size_t curlen = raxNodeCurrentLength(n);
   n->size++;
   size_t newlen = raxNodeCurrentLength(n);
@@ -360,12 +361,16 @@ raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr,
    * move child pointers forward *other than* the obvious sizeof(void*)
    * needed for the additional pointer itself.
    *
-   * hift 的另一种理解方式：shift 值表示除了为新指针本身需要的 sizeof(void*) 空间之外，
+   * shift 的另一种理解方式：shift 值表示除了为新指针本身需要的 sizeof(void*) 空间之外，
    * 还需要将子节点指针向前移动多少字节
    *
    * 这里的 *other than* 表示：
    *    除了为新指针本身所需的 sizeof(void*) 空间之外
    *    还需要将子节点指针向前移动多少字节
+   *
+   *  假设一个节点 a      [head][a][3字节padding][aPtr]
+   *  现在添加一个节点 b   [head][a][b][2字节padding][aPtr][bPtr]
+   *  添加新节点时占用的是 padding 字节, 不需要移动字符, 因此 shift = 0
    * */
   size_t shift = newlen - curlen - sizeof(void *);
 
@@ -391,8 +396,13 @@ raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr,
    * like that:
    *
    * [HDR*][abde][....][Aptr][Bptr][....][Dptr][Eptr]|AUXP|
+   *
    */
   if (shift) {
+    /*
+     * 空出位置写添加节点数据
+     * 如上面注释例子, shift=4, pos=2 , 则 移动 [src,src+2*sizeof(raxNode *)] 向右移动 4 个字节
+     */
     src = (unsigned char *)raxNodeFirstChildPtr(n);
     memmove(src + shift, src, sizeof(raxNode *) * pos);
   }
@@ -575,7 +585,7 @@ static inline size_t raxLowWalk(rax *rax, unsigned char *s, size_t len,
   if (plink)
     *plink = parentlink;
   if (splitpos && h->iscompr)
-    *splitpos = j; // 分割的位置
+    *splitpos = j; // data 在索引j位置分割
   return i;
 }
 
@@ -848,7 +858,7 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data,
       }
       // cp 就是 childPtr
       raxNode **cp = raxNodeLastChildPtr(trimmed);
-      memcpy(cp, &splitnode, sizeof(splitnode));
+      memcpy(cp, &splitnode, sizeof(splitnode)); // 执行这行代码之前, trimmed 的子节点地址还是空的,这行代码设置子节点地址为 splitnode 地址
       memcpy(parentlink, &trimmed, sizeof(trimmed)); // parentlink 之前可以指向 rax->head, 现在修改 rax->head 为 trimmed
       parentlink = cp; /* Set parentlink to splitnode parent. */
       rax->numnodes++;
