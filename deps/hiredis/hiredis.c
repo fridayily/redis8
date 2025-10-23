@@ -153,12 +153,14 @@ static void *createStringObject(const redisReadTask *task, char *str, size_t len
         if (buf == NULL) goto oom;
 
         memcpy(buf,str,len);
+        // note: 这里已设置 '\0', 因此客户端的返回 redisReply->str 一般可以直接使用
         buf[len] = '\0';
         r->len = len;
     }
     r->str = buf; // 设置 reply 的内容
     // 如果返回的是一个 array 类型, 元素有字符串, parent 类型就是数组
-    // 所以这种情况下数据是存储在 parent 中, 而返回的 r 不一定会使用
+    // 所以这种情况下数据是存储在 parent 中, 这种情况下我们需要的是这个数组
+    // 这里返回的 r 不一定会使用,而直接忽略
     if (task->parent) {
         parent = task->parent->obj;
         assert(parent->type == REDIS_REPLY_ARRAY ||

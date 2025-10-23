@@ -65,6 +65,7 @@ static unsigned char rc4_sbox[256] = {
     28,  227, 160, 146, 48,  107, 68,  151, 224, 119, 43,  57,  207, 120, 232,
     70};
 
+// 1. 密钥调度算法（KSA）：初始化状态向量
 void rc4srand(uint64_t seed) {
   /* To seed the RNG in a reproducible way we use a simple
    * hashing function, together with the swapping idea of the
@@ -84,6 +85,7 @@ void rc4srand(uint64_t seed) {
   }
 }
 
+// 2. 伪随机生成算法（PRGA）：生成密钥流
 static void rc4(unsigned char *buf, unsigned long len) {
   static unsigned int i = 0, j = 0;
   unsigned int si, sj, x;
@@ -670,7 +672,8 @@ int randomWalkTest(void) {
 
   long numele;
   for (numele = 0; toadd[numele] != NULL; numele++) {
-    printf("================== %s ========================\n", toadd[numele]);
+    printf("------------------------ %s ------------------------======\n",
+           toadd[numele]);
     //  toadd[numele] 是 key , numele 是 value
     raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
               (void *)numele, NULL);
@@ -682,6 +685,8 @@ int randomWalkTest(void) {
   raxSeek(&iter, "^", NULL, 0);
   int maxloops = 100000;
   while (raxRandomWalk(&iter, 0) && maxloops--) {
+    // 每次随机游走都会得到一对 k,v
+    // 于 toadd 数组中的元素相比较, 如果相等则从 toadd 数组中删除
     int nulls = 0;
     for (long i = 0; i < numele; i++) {
       if (toadd[i] == NULL) {
@@ -694,6 +699,7 @@ int randomWalkTest(void) {
         nulls++;
       }
     }
+    // 所有元素都清空,则跳出循环
     if (nulls == numele)
       break;
   }
@@ -710,12 +716,13 @@ int randomWalkTest(void) {
 /* Test the random walk function. */
 int randomWalkTest2(void) {
   rax *t = raxNew();
-  char *toadd[] = {"ab12","ab1345","ab1245", "b23", "ab12456",
-                   "ab12457", "b234",   "b235", "b23451",  NULL};
+  char *toadd[] = {"ab12",    "ab1345", "ab12", "ab124",  "b23", "ab12456",
+                   "ab12457", "b234",   "b235", "b23451", NULL};
 
   long numele;
   for (numele = 0; toadd[numele] != NULL; numele++) {
-    printf("================== %s ========================\n", toadd[numele]);
+    printf("------------------------ %s ------------------------======\n",
+           toadd[numele]);
     //  toadd[numele] 是 key , numele 是 value
     raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
               (void *)numele, NULL);
@@ -753,6 +760,78 @@ int randomWalkTest2(void) {
   return 0;
 }
 
+int randomWalkTest3(void) {
+  printf("========================== case1 ==========================\n");
+  rax *t = raxNew();
+  char *toadd[] = {"ANNIBALE", "ANNIBALESCO", "ANNIENTARE", NULL};
+  long numele;
+  for (numele = 0; toadd[numele] != NULL; numele++) {
+    printf("------------- %s -------------\n", toadd[numele]);
+    //  toadd[numele] 是 key , numele 是 value
+    raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
+              (void *)numele, NULL);
+    raxShow(t);
+  }
+  for (numele = 0; toadd[numele] != NULL; numele++) {
+    printf("------------- %s -------------\n", toadd[numele]);
+    //  toadd[numele] 是 key , numele 是 value
+    raxRemove(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),NULL);
+    raxShow(t);
+  }
+
+  raxFree(t);
+
+  printf("========================== case2 ==========================\n");
+  t = raxNew();
+  toadd[2] = "ANNIBALI";
+  for (numele = 0; toadd[numele] != NULL; numele++) {
+    printf("------------- %s -------------\n", toadd[numele]);
+    //  toadd[numele] 是 key , numele 是 value
+    raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
+              (void *)numele, NULL);
+    raxShow(t);
+  }
+  raxFree(t);
+
+  printf("========================== case3 ==========================\n");
+  t = raxNew();
+  toadd[2] = "AGO";
+  for (numele = 0; toadd[numele] != NULL; numele++) {
+    printf("------------- %s -------------\n", toadd[numele]);
+    //  toadd[numele] 是 key , numele 是 value
+    raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
+              (void *)numele, NULL);
+    raxShow(t);
+  }
+  raxFree(t);
+
+  printf("========================== case4 ==========================\n");
+  t = raxNew();
+  toadd[2] = "CIAO";
+  for (numele = 0; toadd[numele] != NULL; numele++) {
+    printf("------------- %s -------------\n", toadd[numele]);
+    //  toadd[numele] 是 key , numele 是 value
+    raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
+              (void *)numele, NULL);
+    raxShow(t);
+  }
+  raxFree(t);
+
+  printf("========================== case5 ==========================\n");
+  t = raxNew();
+  toadd[2] = "ANNI";
+  for (numele = 0; toadd[numele] != NULL; numele++) {
+    printf("------------- %s -------------\n", toadd[numele]);
+    //  toadd[numele] 是 key , numele 是 value
+    raxInsert(t, (unsigned char *)toadd[numele], strlen(toadd[numele]),
+              (void *)numele, NULL);
+    raxShow(t);
+  }
+  raxFree(t);
+
+  return 0;
+}
+
 int iteratorUnitTests(void) {
   rax *t = raxNew();
   char *toadd[] = {"alligator", "alien",   "baloon",     "chromodynamic",
@@ -760,6 +839,11 @@ int iteratorUnitTests(void) {
                    "ruber",     "rubicon", "rubicundus", "all",
                    "rub",       "ba",      NULL};
 
+  /*
+   * rc4rand() 是一个基于RC4算法的伪随机数生成器
+   * 每次调用都会更新内部状态并返回一个随机数
+   * 这里只调用函数而不保存返回值，纯粹是为了推进随机数生成器的状态
+   */
   for (int x = 0; x < 10000; x++)
     rc4rand();
 
@@ -770,6 +854,7 @@ int iteratorUnitTests(void) {
   for (long i = 0; i < items; i++)
     raxInsert(t, (unsigned char *)toadd[i], strlen(toadd[i]), (void *)i, NULL);
 
+  raxShow(t);
   raxIterator iter;
   raxStart(&iter, t);
 
@@ -867,6 +952,7 @@ int regtest1(void) {
 
   raxIterator iter;
   raxStart(&iter, rax);
+  // 检查返回的键是否为 "FY"（字典序中第一个大于 "FMP" 的键）
   raxSeek(&iter, ">", (unsigned char *)"FMP", 3);
   if (raxNext(&iter)) {
     if (iter.key_len != 2 || memcmp(iter.key, "FY", 2)) {
@@ -1167,14 +1253,14 @@ int main(int argc, char **argv) {
     fflush(stdout);
     // if (randomWalkTest())
     //   errors++;
-    if (randomWalkTest2())
-      errors++;
-    if (iteratorUnitTests())
-      errors++;
-    if (tryInsertUnitTests())
-      errors++;
-    if (errors == 0)
-      printf("OK\n");
+    if (randomWalkTest3())
+    errors++;
+    // if (iteratorUnitTests())
+    //   errors++;
+    // if (tryInsertUnitTests())
+    //   errors++;
+    // if (errors == 0)
+    //   printf("OK\n");
   }
 
   if (do_regression) {

@@ -7237,6 +7237,7 @@ int main(int argc, char **argv) {
      * ./redis-server test ziplist --accurate
      * ./redis-server test quicklist --accurate
      * ./redis-server test listpack --accurate
+     * ./redis-server test kvstore --accurate
      * 在 clion 中配置
      */
     monotonicInit(); /* Required for dict tests, that are relying on monotime during dict rehashing. */
