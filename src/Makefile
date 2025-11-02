@@ -16,6 +16,7 @@
 # Dependencies are stored in the Makefile.dep file. To rebuild this file
 # Just use 'make dep', but this is only needed by developers.
 
+# sh -c: Shell将引号内的字符串作为命令来执行。
 release_hdr := $(shell sh -c './mkreleasehdr.sh')
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 uname_M := $(shell sh -c 'uname -m 2>/dev/null || echo not')
@@ -24,6 +25,8 @@ CLANG := $(findstring clang,$(shell sh -c '$(CC) --version | head -1'))
 # Optimization flags. To override, the OPTIMIZATION variable can be passed, but
 # some automatic defaults are added to it. To specify optimization flags
 # explicitly without any defaults added, pass the OPT variable instead.
+# 设置默认优化级别为 -O3
+# ?= 是一个条件赋值操作符，用于设置变量的默认值
 OPTIMIZATION?=-O3
 ifeq ($(OPTIMIZATION),-O3)
 	ifeq (clang,$(CLANG))
@@ -32,17 +35,25 @@ ifeq ($(OPTIMIZATION),-O3)
 		OPTIMIZATION+=-flto=auto
 	endif
 endif
+# 当优化级别不是 -O0 时，添加 -fno-omit-frame-pointer 编译选项, 保留函数调用的帧指针，便于调试和性能分析
+# 生产环境需要优化性能但也要保持一定的可调试性
 ifneq ($(OPTIMIZATION),-O0)
 	OPTIMIZATION+=-fno-omit-frame-pointer
 endif
 DEPENDENCY_TARGETS=hiredis linenoise lua hdr_histogram fpconv fast_float
+# clean 和 distclean 目标在执行时不会触发依赖项的重新构建
+# 当执行 make clean 或 make distclean 时，由于这些目标在 NODEPS 列表中，不会去检查或重建依赖项，直接执行清理操作
 NODEPS:=clean distclean
 
 # Default settings
+# -pedantic 选项 启用严格的ISO C标准检查, 对不符合ISO C标准的代码发出警告
+# -DREDIS_STATIC='' 定义预处理器宏 REDIS_STATIC 为空字符串, 用于控制函数和变量的可见性
 STD=-pedantic -DREDIS_STATIC=''
 
 # Use -Wno-c11-extensions on clang, either where explicitly used or on
 # platforms we can assume it's being used.
+# 当检测到使用 clang 编译器时或在 FreeBSD 系统上时，添加 -Wno-c11-extensions 选项
+# 这个选项用于抑制clang编译器对C11扩展特性的警告
 ifeq (clang,$(CLANG))
   STD+=-Wno-c11-extensions
 else
@@ -50,16 +61,28 @@ ifneq (,$(findstring FreeBSD,$(uname_S)))
   STD+=-Wno-c11-extensions
 endif
 endif
+# -Wall: 启用大部分常用警告
+# W: 启用一些额外的警告
+# -Wno-missing-field-initializers: 禁用缺失字段初始化警告
+# -Werror=deprecated-declarations: 将使用已弃用声明视为错误
+# -Wstrict-prototypes: 对函数原型进行严格检查
 WARN=-Wall -W -Wno-missing-field-initializers -Werror=deprecated-declarations -Wstrict-prototypes
 OPT=$(OPTIMIZATION)
 
 SKIP_VEC_SETS?=no
 # Detect if the compiler supports C11 _Atomic.
 # NUMBER_SIGN_CHAR is a workaround to support both GNU Make 4.3 and older versions.
+# 用于兼容不同版本GNU Make的#字符处理, 避免在Makefile中直接使用#导致的语法问题
+# 立即求值 (:=)
+#    变量定义时立即展开右侧表达式, 变量值在定义时就确定，后续不会重新计算
+# 延迟求值 (=)
+#    变量使用时才展开右侧表达式, 每次使用变量时都会重新计算右侧表达式
 NUMBER_SIGN_CHAR := \#
 C11_ATOMIC := $(shell sh -c 'echo "$(NUMBER_SIGN_CHAR)include <stdatomic.h>" > foo.c; \
 	$(CC) -std=gnu11 -c foo.c -o foo.o > /dev/null 2>&1; \
 	if [ -f foo.o ]; then echo "yes"; rm foo.o; fi; rm foo.c')
+# 如果支持C11：将STD变量添加-std=gnu11选项
+# 如果不支持C11：设置SKIP_VEC_SETS=yes并使用-std=c99标准
 ifeq ($(C11_ATOMIC),yes)
 	STD+=-std=gnu11
 else
@@ -83,6 +106,8 @@ ifeq ($(uname_S),Linux)
 endif
 
 # To get ARM stack traces if Redis crashes we need a special C flag.
+# filter 函数匹配 aarch64 或 armv%（以armv开头）的架构
+# -funwind-tables：生成展开表(unwind tables)，用于异常处理和堆栈展开
 ifneq (,$(filter aarch64 armv%,$(uname_M)))
         CFLAGS+=-funwind-tables
 endif
@@ -246,6 +271,8 @@ LIBSYSTEMD_LIBS=-lsystemd
 
 # If 'USE_SYSTEMD' in the environment is neither "no" nor "yes", try to
 # auto-detect libsystemd's presence and link accordingly.
+# 当USE_SYSTEMD环境变量不等于"no"时，执行检测逻辑
+# 使用pkg-config检查系统是否安装了libsystemd库
 ifneq ($(USE_SYSTEMD),no)
 	LIBSYSTEMD_PKGCONFIG := $(shell $(PKG_CONFIG) --exists libsystemd && echo $$?)
 # If libsystemd cannot be detected, continue building without support for it
@@ -324,6 +351,7 @@ ifneq ($(SKIP_VEC_SETS),yes)
 	FINAL_CFLAGS+=-DINCLUDE_VEC_SETS=1
 endif
 
+# 许用户通过make V=1来启用详细输出模式，便于调试和查看安装过程，或者使用默认的静默模式使构建过程更简洁
 ifndef V
     define MAKE_INSTALL
         @printf '    %b %b\n' $(LINKCOLOR)INSTALL$(ENDCOLOR) $(BINCOLOR)$(1)$(ENDCOLOR) 1>&2
@@ -386,6 +414,8 @@ endif
 
 .PHONY: all
 
+# 清理: 首先执行distclean清理旧的构建文件
+# 保存配置: 将各种编译选项(如STD、WARN、OPT等)写入.make-settings文件
 persist-settings: distclean
 	echo STD=$(STD) >> .make-settings
 	echo WARN=$(WARN) >> .make-settings
@@ -404,6 +434,10 @@ persist-settings: distclean
 .PHONY: persist-settings
 
 # Prerequisites target
+# 这是一个伪目标（phony target），不对应实际的文件, 用于确保在编译任何对象文件之前完成必要的前置条件
+# @ 表示不显示命令本身，只执行
+# touch 创建或更新文件的时间戳
+# $@ 是Make的自动变量，代表目标名称（即 .make-prerequisites）
 .make-prerequisites:
 	@touch $@
 
@@ -417,6 +451,9 @@ ifneq ($(strip $(PREV_FINAL_LDFLAGS)), $(strip $(FINAL_LDFLAGS)))
 endif
 
 # redis-server
+# -o $@表示将输出文件命名为目标名称
+#  $^代表所有依赖项
+# .a 为静态库连接
 $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ) $(REDIS_VEC_SETS_OBJ)
 	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a ../deps/fast_float/libfast_float.a $(FINAL_LIBS)
 
@@ -450,6 +487,10 @@ DEP = $(REDIS_SERVER_OBJ:%.o=%.d) $(REDIS_VEC_SETS_OBJ:%.o=%.d) $(REDIS_CLI_OBJ:
 # Because the jemalloc.h header is generated as a part of the jemalloc build,
 # building it should complete before building any other object. Instead of
 # depending on a single artifact, build all dependencies first.
+# 编译所有 .c 源文件为 .o 对象文件
+# -MMD: 生成依赖信息文件（.d 文件），用于追踪头文件依赖关系
+# -o $@: 输出文件为目标文件名（.o 文件）
+# c $<: 编译源文件（不链接），$< 表示第一个依赖（.c 文件）
 %.o: %.c .make-prerequisites
 	$(REDIS_CC) -MMD -o $@ -c $<
 
@@ -495,6 +536,7 @@ test-cluster: $(REDIS_SERVER_NAME) $(REDIS_CLI_NAME)
 
 check: test
 
+# 用于生成代码覆盖率报告
 lcov:
 	@lcov --version
 	$(MAKE) gcov
