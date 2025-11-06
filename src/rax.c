@@ -520,7 +520,7 @@ static inline size_t raxLowWalk(rax *rax, unsigned char *s, size_t len,
   size_t j = 0; /* Position in the node children (or bytes if compressed).*/
 
   /**
-   * 根据字符串 s 逐级遍历 rax 树, 每遍历一次匹配一个字符
+   * 根据字符串 s 逐级遍历 rax 树, 每遍历一次匹配一个字符, i 是遍历到的索引
    */
   while (h->size && i < len) {
     debugnode("Lookup current node", h);
@@ -550,7 +550,7 @@ static inline size_t raxLowWalk(rax *rax, unsigned char *s, size_t len,
        * 树中查找子节点时，即使节点有很多子节点，代码仍然选择使用线性扫描而
        * 不是二分查找，因为实际测试中线性扫描的性能表现更好
        * s 是要要查找的字符串, v 是节点的元素
-       * 这里是非压缩节点
+       * 这里是非压缩节点,只要匹配其中一个就跳出循环
        */
       for (j = 0; j < h->size; j++) {
         if (v[j] == s[i])
@@ -1134,7 +1134,26 @@ raxNode **raxFindParentLink(raxNode *parent, raxNode *child) {
 /* Low level child removal from node. The new node pointer (after the child
  * removal) is returned. Note that this function does not fix the pointer
  * of the parent node in its parent, so this task is up to the caller.
- * The function never fails for out of memory. */
+ * The function never fails for out of memory.
+ * 从节点中删除子节点的底层操作,
+ * 函数会返回删除子节点后的新节点指针
+ *
+ * 当你从一个 raxNode（父节点）中移除其子节点时，
+ * raxRemoveChild 函数会更新这个父节点本身（移除对应子节点的信息），
+ * 但不会更新父节点的父节点中指向该父节点的指针
+ *
+ * parent remove 一个节点后,内存地址可能发生变化
+ * 但原本 parent 可能属于另外一个节点的子节点,
+ * 即 parent 的地址是保存在其父节点中, 这个地址在这个函数中没有修改
+ *
+ * 这里 child 是一个节点的地址,这个节点在调用 raxRemoveChild 前可能已经 free
+ * raxRemoveChild 就是要删除 child 地址及其节点元素
+ *
+ *  [HDR*][abde][Aptr][Bptr][Dptr][Eptr]|AUXP|[....][....]
+ *
+ *  如 child = Bptr ,Bptr 指向的数据已经删除了
+ *  这个函数要删除 B 和  Bptr
+ */
 raxNode *raxRemoveChild(raxNode *parent, raxNode *child) {
   debugnode("raxRemoveChild before", parent);
   /* If parent is a compressed node (having a single child, as for definition
@@ -1174,9 +1193,23 @@ raxNode *raxRemoveChild(raxNode *parent, raxNode *child) {
   }
 
   /* 3. Remove the edge and the pointer by memmoving the remaining children
-   *    pointer and edge bytes one position before. */
+   *    pointer and edge bytes one position before.
+   *
+   *  e：指向要删除的边字符在 parent->data 数组中的位置
+   *  (e - parent->data)：要删除的边字符在数组中的索引位置
+   *  结果 taillen 表示从要删除元素的下一个位置开始，到最后一个元素的长度
+   *
+   *  [HDR*][abcd][Aptr][Bptr][Cptr][Dptr]|AUXP|
+   *  要删除 b
+   *  size = 4, (e - parent->data)=1
+   *  taillen = 4-1-1 = 2 , 即 cd 向左移动一位
+   *  要删除 d
+   *  size = 4, (e-parent->data)=3
+   *  taillen = 4-3-1 = 0 ,无需移动数据
+   */
   int taillen = parent->size - (e - parent->data) - 1;
   debugf("raxRemoveChild tail len: %d\n", taillen);
+  // 这里的 memmove 只针对 data, 不针对对应的指针
   memmove(e, e + 1, taillen);
 
   /* Compute the shift, that is the amount of bytes we should move our
@@ -1184,16 +1217,46 @@ raxNode *raxRemoveChild(raxNode *parent, raxNode *child) {
    * and the corresponding padding change, may change the layout.
    * We just check if in the old version of the node there was at the
    * end just a single byte and all padding: in that case removing one char
-   * will remove a whole sizeof(void*) word. */
+   * will remove a whole sizeof(void*) word.
+   *
+   * parent->size是节点中子元素的数量
+   * 加4是因为rax节点头占4个字节
+   *
+   * 当(parent->size + 4) % sizeof(void*) == 1时,
+   * 说明 padding 字节存在(加上 padding 才是 sizeof(void *) 整数倍)
+   * 删除一个字符会导致整个sizeof(void*)大小的内存块被移除
+   *
+   * [HDR*][abc][x][ptr] padding 有 1 位, 删除其中一位, padding 2 位即可,不需移动 ptr
+   * [HDR*][abcd][ptr] 刚好 8 字节,没有 padding
+   * [HDR*][abcde][xxxxxxx][ptr] padding 有 7 位, 删除其中一个要移动 8 字节
+   *
+   * cp 初始指向第一个节点指针
+   */
   size_t shift =
       ((parent->size + 4) % sizeof(void *)) == 1 ? sizeof(void *) : 0;
 
-  /* Move the children pointers before the deletion point. */
+  /* Move the children pointers before the deletion point.
+   *
+   *  [HDR*][abcde][padding][Aptr][Bptr][Cptr][Dptr][Eptr]|AUXP|
+   *  要删除 b
+   *     size = 5, (e - parent->data)=1
+   *     taillen = 5-1-1 = 3 , 即 cd 向左移动一位
+   *     (parent->size - taillen - 1) = 4-2-1=1
+   *     执行 memmove 后:
+   *          [HDR*][acde][Aptr][xxxx][Bptr][Cptr][Dptr]|AUXP|
+   *          移动 Aptr 占据了之前 padding 字符
+   *          原来 Aptr 的位置空出
+   */
   if (shift)
     memmove(((char *)cp) - shift, cp,
             (parent->size - taillen - 1) * sizeof(raxNode **));
 
-  /* Move the remaining "tail" pointers at the right position as well. */
+  /* Move the remaining "tail" pointers at the right position as well.
+   * memmove 之前
+   *  [HDR*][acde][Aptr][xxxx][Bptr][Cptr][Dptr][Eptr][AUXP]
+   *  之后
+   *  [HDR*][acde][Aptr][Cptr][Dptr][Eptr][AUXP][xxxx]
+   */
   size_t valuelen = (parent->iskey && !parent->isnull) ? sizeof(void *) : 0;
   memmove(((char *)c) - shift, c + 1, taillen * sizeof(raxNode **) + valuelen);
 
@@ -1201,7 +1264,13 @@ raxNode *raxRemoveChild(raxNode *parent, raxNode *child) {
   parent->size--;
 
   /* realloc the node according to the theoretical memory usage, to free
-   * data if we are over-allocating right now. */
+   * data if we are over-allocating right now.
+   * 根据理论上的内存使用量重新分配节点内存，如果当前存在过度分配的情况，则释放多余的数据
+   *
+   * [HDR*][acde][Aptr][Cptr][Dptr][Eptr][AUXP][xxxx]
+   * ->
+   * [HDR*][acde][Aptr][Cptr][Dptr][Eptr][AUXP]
+   */
   raxNode *newnode = rax_realloc(parent, raxNodeCurrentLength(parent));
   if (newnode) {
     debugnode("raxRemoveChild after", newnode);
@@ -1256,7 +1325,7 @@ int raxRemove(rax *rax, unsigned char *s, size_t len, void **old) {
 
   int trycompress = 0; /* Will be set to 1 if we should try to optimize the
                           tree resulting from the deletion. */
-
+  // raxStack 中保存了遍历得到的节点, 如果一个节点没有子节点可以将其 free
   if (h->size == 0) {
     debugf("Key deleted in node without children. Cleanup needed.\n");
     raxNode *child = NULL;
