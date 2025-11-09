@@ -177,6 +177,9 @@ target_link_libraries(hiredis_example-push hiredis)
 add_executable(hiredis_example-poll ${REDIS_SRC}/deps/hiredis/examples/example-poll.c ${TEST_HIREDIS_SOURCES})
 target_link_libraries(hiredis_example-poll hiredis)
 
+add_executable(hiredis_example-stream ${REDIS_SRC}/deps/hiredis/examples/example-stream.c ${TEST_HIREDIS_SOURCES})
+target_link_libraries(hiredis_example-stream hiredis)
+
 
 add_executable(getaddrinfo getaddrinfo.c)
 

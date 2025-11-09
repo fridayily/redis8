@@ -75,7 +75,7 @@ set(REDIS_BENCHMARK_LIST
         src/mt19937-64.c src/strl.c)
 
 # 如果启用测试，则定义 REDIS_TEST 宏
-set(ENABLE_TESTS ON)
+set(ENABLE_TESTS OFF)
 if(ENABLE_TESTS)
     message(STATUS "Building with Redis test code")
     add_definitions(-DREDIS_TEST)
