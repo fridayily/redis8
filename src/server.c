@@ -6561,15 +6561,33 @@ void createPidFile(void) {
     }
 }
 
+/*
+ * 这个函数将Redis服务器转换为守护进程，使其能够在后台独立运行，不依赖于启动它的终端会话。
+ *  假设有一个进程
+ *      sid = 1 , pid = 966 , pgid = 966
+ *  使用 fork()
+ *  关闭父进程,在子进程中
+ *      sid = 1 , pid = 969 , pgid = 966
+ *  执行 setsid()
+ *      sid = 969 , pid = 969 , pgid = 969
+ *
+ *  创建新会话（session）的系统调用，主要功能是将当前进程设置为新会话的会话
+ *  首进程（session leader），并脱离原有的控制终端（controlling terminal）
+ */
 void daemonize(void) {
     int fd;
 
     if (fork() != 0) exit(0); /* parent exits */
+    // 调用 setsid() 使子进程成为新会话的首进程, 使进程就脱离了控制终端
     setsid(); /* create a new session */
 
     /* Every output goes to /dev/null. If Redis is daemonized but
      * the 'logfile' is set to 'stdout' in the configuration file
-     * it will not log at all. */
+     * it will not log at all.
+     * 将标准输入(STDIN_FILENO)、标准输出(STDOUT_FILENO)和
+     * 标准错误(STDERR_FILENO)都重定向到 /dev/null
+     * 这样所有输出都被丢弃，避免在后台运行时干扰终端
+     */
     if ((fd = open("/dev/null", O_RDWR, 0)) != -1) {
         dup2(fd, STDIN_FILENO);
         dup2(fd, STDOUT_FILENO);
@@ -6940,8 +6958,14 @@ void dismissMemoryInChild(void) {
 void memtest(size_t megabytes, int passes);
 
 /* Returns 1 if there is --sentinel among the arguments or if
- * executable name contains "redis-sentinel". */
+ * executable name contains "redis-sentinel".
+ *
+ * Redis 和 Sentinel 可以通过以下方式启动：
+ * 使用 redis-server 命令配合配置文件启动
+ * 直接使用 redis-sentinel 命令启动
+ */
 int checkForSentinelMode(int argc, char **argv, char *exec_name) {
+     // strstr 用于在一个字符串中查找另一个字符串的首次出现位置。
     if (strstr(exec_name,"redis-sentinel") != NULL) return 1;
 
     for (int j = 1; j < argc; j++)
@@ -7287,20 +7311,43 @@ int main(int argc, char **argv) {
 #ifdef INIT_SETPROCTITLE_REPLACEMENT
     spt_init(argc, argv);
 #endif
+    /*
+     * 调用此函数会填充几个全局变量，包括
+     *      timezone：当前时区与UTC的偏移量（以秒为单位）
+     *      daylight：指示是否使用夏令时
+     *      tzname[2]：时区名称数组
+     */
     tzset(); /* Populates 'timezone' global. */
     zmalloc_set_oom_handler(redisOutOfMemoryHandler);
 
     /* To achieve entropy, in case of containers, their time() and getpid() can
-     * be the same. But value of tv_usec is fast enough to make the difference */
+     * be the same. But value of tv_usec is fast enough to make the difference
+     * 函数填充 tv 结构体，其中 tv_sec 成员表示自 Unix 纪元（1970年1月1日 00:00:00 UTC）以来的秒数，
+     * tv_usec 成员表示微秒部分
+     *
+     * 设置随机数生成器的种子，确保生成的随机数序列具有良好的随机性。
+     */
     gettimeofday(&tv,NULL);
+    // srand(): 初始化C标准库的随机数生成器
     srand(time(NULL)^getpid()^tv.tv_usec);
+    // srandom(): 初始化POSIX随机数生成器
     srandom(time(NULL)^getpid()^tv.tv_usec);
+    // 初始化MT19937-64随机数生成器
     init_genrand64(((long long) tv.tv_sec * 1000000 + tv.tv_usec) ^ getpid());
+    // 初始化CRC64校验表
     crc64_init();
 
     /* Store umask value. Because umask(2) only offers a set-and-get API we have
      * to reset it and restore it back. We do this early to avoid a potential
      * race condition with threads that could be creating files or directories.
+     * 通过两次调用umask()函数来获取当前的umask值
+     * 将获取到的umask值存储在server.umask变量中
+     *
+     * 第一次调用umask(0777)将umask设置为0777并返回旧的umask值
+     * 通过赋值操作server.umask = umask(0777)将旧值保存到服务器配置中
+     * 第二次调用umask(server.umask)将umask恢复为原来的值
+     *
+     * 这种方式确保了Redis能够获取并保存系统umask值，同时不影响系统的原有umask设置
      */
     umask(server.umask = umask(0777));
 
@@ -7308,9 +7355,11 @@ int main(int argc, char **argv) {
     getRandomBytes(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed(hashseed);
 
+    // strrchr 返回指向最后一个 '/' 字符的指针，如果未找到则返回 NULL
     char *exec_name = strrchr(argv[0], '/');
     if (exec_name == NULL) exec_name = argv[0];
     server.sentinel_mode = checkForSentinelMode(argc,argv, exec_name);
+    // 初始化服务器
     initServerConfig();
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
@@ -7326,7 +7375,10 @@ int main(int argc, char **argv) {
 
     /* We need to init sentinel right now as parsing the configuration file
      * in sentinel mode will have the effect of populating the sentinel
-     * data structures with master nodes to monitor. */
+     * data structures with master nodes to monitor.
+     * 如果服务器以 Sentinel 模式启动，那么进行 Sentinel 功能相关的初始化
+     * 并为要监视的主服务器创建一些相应的数据结构
+     */
     if (server.sentinel_mode) {
         initSentinelConfig();
         initSentinel();
@@ -7340,11 +7392,15 @@ int main(int argc, char **argv) {
     else if (strstr(exec_name,"redis-check-aof") != NULL)
         redis_check_aof_main(argc,argv);
 
+    // 检查用户是否指定了配置文件，或者配置选项
     if (argc >= 2) {
         j = 1; /* First option to parse in argv[] */
         sds options = sdsempty();
 
-        /* Handle special options --help and --version */
+        /* Handle special options --help and --version
+         *
+         * 处理特殊选项 -h 、-v 和 --test-memory
+         */
         if (strcmp(argv[1], "-v") == 0 ||
             strcmp(argv[1], "--version") == 0)
         {
@@ -7487,7 +7543,9 @@ int main(int argc, char **argv) {
 #endif /* __arm64__ */
 #endif /* __linux__ */
 
-    /* Daemonize if needed */
+    /* Daemonize if needed
+     * 将 Redis 服务器进程从终端分离，在后台运行
+     */
     server.supervised = redisIsSupervised(server.supervised_mode);
     int background = server.daemonize && !server.supervised;
     if (background) daemonize();

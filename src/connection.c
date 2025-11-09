@@ -64,7 +64,10 @@ int connTypeInitialize(void) {
     /* currently unix socket connection type is necessary  */
     serverAssert(RedisRegisterConnectionTypeUnix() == C_OK);
 
-    /* may fail if without BUILD_TLS=yes */
+    /* may fail if without BUILD_TLS=yes
+     * TLS（Transport Layer Security，传输层安全协议）是一种加密协议，
+     * 用于在网络通信中提供安全保护。
+     */
     RedisRegisterConnectionTypeTLS();
 
     return C_OK;

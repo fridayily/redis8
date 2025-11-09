@@ -394,7 +394,12 @@ uint16_t crcspeed16native(uint16_t table[8][256], uint16_t crc, void *buf,
                        : crcspeed16big(table, crc, buf, len);
 }
 
-/* Initialize CRC lookup table in architecture-dependent manner. */
+/* Initialize CRC lookup table in architecture-dependent manner.
+ *
+ *  *(char *)&n 检查最低有效字节
+ *  如果结果为真（非零），说明是小端序（little-endian）
+ *  否则说明是大端序（big-endian）
+ */
 void crcspeed64native_init(crcfn64 fn, uint64_t table[8][256]) {
     uint64_t n = 1;
 

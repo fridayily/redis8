@@ -116,6 +116,10 @@ struct hdr_histogram;
 #define CONFIG_BGSAVE_RETRY_DELAY 5 /* Wait a few secs before trying again. */
 #define CONFIG_DEFAULT_PID_FILE "/var/run/redis.pid"
 #define CONFIG_DEFAULT_BINDADDR_COUNT 2
+/*
+ * "*" - 表示监听所有IPv4地址
+ * "-::*" - 表示监听所有IPv6地址，前面的-表示这是可选的，如果系统不支持IPv6则会跳过
+ */
 #define CONFIG_DEFAULT_BINDADDR { "*", "-::*" }
 #define NET_HOST_STR_LEN 256 /* Longest valid hostname */
 #define NET_IP_STR_LEN 46 /* INET6_ADDRSTRLEN is 46, but we need to be sure */

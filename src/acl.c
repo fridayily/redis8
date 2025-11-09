@@ -1421,13 +1421,23 @@ user *ACLCreateDefaultUser(void) {
     return new;
 }
 
-/* Initialization of the ACL subsystem. */
+/* Initialization of the ACL subsystem.
+ * Access Control List
+ * 访问控制列表
+ * 实现限制特定客户端连接可执行命令和键访问的功能
+ */
 void ACLInit(void) {
+    // 创建一个基数树(rax)来存储所有用户信息
     Users = raxNew();
+    // 创建一个链表，用于存储从配置文件中加载的用户定义
     UsersToLoad = listCreate();
+    // 初始化命令分类系统，用于按类别管理命令权限
     ACLInitCommandCategories();
+    // 为 UsersToLoad 链表设置匹配方法
     listSetMatchMethod(UsersToLoad, ACLListMatchLoadedUser);
+    // 创建一个链表，用作安全日志，可以通过 ACL LOG 命令查看
     ACLLog = listCreate();
+    // 创建并初始化默认用户
     DefaultUser = ACLCreateDefaultUser();
 }
 

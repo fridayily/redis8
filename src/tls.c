@@ -1192,6 +1192,12 @@ int RedisRegisterConnectionTypeTLS(void) {
 
 #else   /* USE_OPENSSL */
 
+/*
+ * 这部分代码位于#else分支中，
+ *  意味着当USE_OPENSSL不为1（即没有启用OpenSSL支持）时会编译这段代码。
+ *  使用serverLog函数记录一条详细日志，表明TLS连接类型未内置
+ *  函数返回C_ERR，表示TLS连接类型注册失败。
+ */
 int RedisRegisterConnectionTypeTLS(void) {
     serverLog(LL_VERBOSE, "Connection type %s not builtin", CONN_TYPE_TLS);
     return C_ERR;

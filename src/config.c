@@ -1858,6 +1858,7 @@ static void boolConfigRewrite(standardConfig *config, const char *name, struct r
     rewriteConfigYesNoOption(state, name, val, config->data.yesno.default_value);
 }
 
+// 编译器根据上下文推断出这是在初始化 standardConfig 结构体
 #define createBoolConfig(name, alias, flags, config_addr, default, is_valid, apply) { \
     embedCommonConfig(name, alias, flags) \
     embedConfigInterface(boolConfigInit, boolConfigSet, boolConfigGet, boolConfigRewrite, apply) \

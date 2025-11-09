@@ -193,17 +193,23 @@ void spt_init(int argc, char *argv[]) {
 	char *base, *end, *nul, *tmp;
 	int i, error, envc;
 
+	// 检查argv[0]是否为空。argv[0]通常包含了程序的可执行文件路径。如果为空，则认为程序启动有问题，因此直接返回
 	if (!(base = argv[0]))
 		return;
 
-	/* We start with end pointing at the end of argv[0] */
+	/* We start with end pointing at the end of argv[0]
+	 * 主函数的第一个参数，一般就是程序名，这里返回程序名最后字节的地址
+	 */
 	nul = &base[strlen(base)];
+	// 参数最后字节地址+1，这里存的环境变量
 	end = nul + 1;
 
 	/* Attempt to extend end as far as we can, while making sure
 	 * that the range between base and end is only allocated to
 	 * argv, or anything that immediately follows argv (presumably
 	 * envp).
+	 * 在程序启动时，argv 数组和 environ 数组通常在内存中是连续排列的
+	 * 一般来说，argv 参数数组后面紧跟 environ 环境变量数组
 	 */
 	for (i = 0; i < argc || (i >= argc && argv[i]); i++) {
 		if (!argv[i] || argv[i] < end)
@@ -215,6 +221,7 @@ void spt_init(int argc, char *argv[]) {
 
 	/* In case the envp array was not an immediate extension to argv,
 	 * scan it explicitly.
+	 * envp 用数组保存环境变量，这里定位到环境变量最后的地址，直到 envp 为空
 	 */
 	for (i = 0; envp[i]; i++) {
 		if (envp[i] < end)
@@ -235,7 +242,10 @@ void spt_init(int argc, char *argv[]) {
 #if __linux__
 	if (!(tmp = strdup(program_invocation_name)))
 		goto syerr;
-
+	// 这样做的目的通常是为了保留原始 program_invocation_name 的内容同时，能够自由地修改这个副本，
+	// 而不会影响到系统或其它部分可能依赖的原始值。
+	// 例如，这可能用于在程序运行过程中动态改变自我报告的名称，或者确保在后续的操作中即使原始字符串被修改，
+	// 程序仍能维持一个一致的名称引用。
 	program_invocation_name = tmp;
 
 	if (!(tmp = strdup(program_invocation_short_name)))
@@ -245,7 +255,8 @@ void spt_init(int argc, char *argv[]) {
 #elif __APPLE__
 	if (!(tmp = strdup(getprogname())))
 		goto syerr;
-
+	// 确保程序名称信息在内存中有一份独立的副本
+	// 通过创建副本来避免后续修改进程标题时影响到程序名称
 	setprogname(tmp);
 #endif
 
@@ -256,9 +267,9 @@ void spt_init(int argc, char *argv[]) {
 	if ((error = spt_copyargs(argc, argv)))
 		goto error;
 
-	SPT.nul  = nul;
-	SPT.base = base;
-	SPT.end  = end;
+	SPT.nul  = nul;  // 程序名结束的地址
+	SPT.base = base; // 函数参数的起始地址
+	SPT.end  = end; // 环境变量最后的地址
 
 	return;
 syerr:

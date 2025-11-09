@@ -957,13 +957,19 @@ err:
  * the uses a one way hash function in counter mode to generate a random
  * stream. However if /dev/urandom is not available, a weaker seed is used.
  *
- * This function is not thread safe, since the state is global. */
+ * This function is not thread safe, since the state is global.
+ *
+ * 尝试从 /dev/urandom 获取高质量的随机种子
+ * 如果无法访问 /dev/urandom，则使用基于时间戳和进程ID的备用种子生成方法
+ */
 void getRandomBytes(unsigned char *p, size_t len) {
     /* Global state. */
     static int seed_initialized = 0;
     static unsigned char seed[64]; /* 512 bit internal block size. */
     static uint64_t counter = 0; /* The counter we hash with the seed. */
 
+    // 当程序第一次调用 getRandomBytes 时，会初始化随机数种子，
+    // 然后将 seed_initialized 设置为1。后续调用时会跳过初始化过程，直接使用已初始化的种子。
     if (!seed_initialized) {
         /* Initialize a seed and use SHA1 in counter mode, where we hash
          * the same seed with a progressive counter. For the goals of this
