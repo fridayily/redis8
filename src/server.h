@@ -981,7 +981,7 @@ struct RedisModuleDigest {
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
  * internally represented in multiple ways. The 'encoding' field of the object
  * is set to one of this fields for this object. */
-#define OBJ_ENCODING_RAW 0     /* Raw representation */
+#define OBJ_ENCODING_RAW 0     /* Raw representation 原始 SDS 字符串表示 */
 #define OBJ_ENCODING_INT 1     /* Encoded as integer */
 #define OBJ_ENCODING_HT 2      /* Encoded as hash table */
 #define OBJ_ENCODING_ZIPMAP 3  /* No longer used: old hash encoding. */
@@ -1785,6 +1785,10 @@ struct redisServer {
                                  * cron stuff (active expire, eviction) */
     rax *clients_index;         /* Active clients dictionary by client ID. */
     uint32_t paused_actions;   /* Bitmask of actions that are currently paused */
+    /*
+     * 在特定情况下（如正在进行某些阻塞操作或资源不足时），将客户端请求暂存而不是立即处理
+     * 当客户端需要被推迟处理时，会将其添加到这个列表中
+     */
     list *postponed_clients;       /* List of postponed clients */
     pause_event client_pause_per_purpose[NUM_PAUSE_PURPOSES];
     char neterr[ANET_ERR_LEN];   /* Error buffer for anet.c */
@@ -2124,6 +2128,13 @@ struct redisServer {
     unsigned int tracking_clients;  /* # of clients with tracking enabled.*/
     size_t tracking_table_max_keys; /* Max number of keys in tracking table. */
     list *tracking_pending_keys; /* tracking invalidation keys pending to flush */
+    /*
+     * 当客户端启用 CLIENT TRACKING 模式时，服务器会跟踪该客户端访问的键
+     * 当这些键被修改时，服务器需要通知客户端其缓存已失效
+     * 为了提高效率，Redis 不会立即发送每个失效通知
+     * 而是将需要通知的键暂存在 tracking_pending_keys 链表中
+     * 在适当的时机（如事件循环的特定阶段）批量发送这些失效通知
+     */
     list *pending_push_messages; /* pending publish or other push messages to flush */
     /* Sort parameters - qsort_r() is only available under BSD so we
      * have to take this state global, in order to pass it to sortCompare() */

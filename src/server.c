@@ -1942,7 +1942,9 @@ void afterSleep(struct aeEventLoop *eventLoop) {
 void createSharedObjects(void) {
     int j;
 
-    /* Shared command responses */
+    /* Shared command responses
+     * 常用回复
+     */
     shared.ok = createObject(OBJ_STRING,sdsnew("+OK\r\n"));
     shared.emptybulk = createObject(OBJ_STRING,sdsnew("$0\r\n\r\n"));
     shared.czero = createObject(OBJ_STRING,sdsnew(":0\r\n"));
@@ -2407,6 +2409,7 @@ void adjustOpenFilesLimit(void) {
     struct rlimit limit;
 
     if (getrlimit(RLIMIT_NOFILE,&limit) == -1) {
+        // 如果获取失败（返回-1），记录警告日志
         serverLog(LL_WARNING,"Unable to obtain the current NOFILE limit (%s), assuming 1024 and setting the max clients configuration accordingly.",
             strerror(errno));
         server.maxclients = 1024-CONFIG_MIN_RESERVED_FDS;
@@ -2416,6 +2419,7 @@ void adjustOpenFilesLimit(void) {
         /* Set the max number of files if the current limit is not enough
          * for our needs. */
         if (oldlimit < maxfiles) {
+            // 设置的 maxfiles 超出了系统限制,要适当减少
             rlim_t bestlimit;
             int setrlimit_error = 0;
 
@@ -2427,6 +2431,12 @@ void adjustOpenFilesLimit(void) {
 
                 limit.rlim_cur = bestlimit;
                 limit.rlim_max = bestlimit;
+                /*
+                 * 1.权限不足
+                 * 2.超出系统最大限制
+                 * 3.无效参数
+                 * 4.系统资源不足
+                 */
                 if (setrlimit(RLIMIT_NOFILE,&limit) != -1) break;
                 setrlimit_error = errno;
 
@@ -2440,9 +2450,13 @@ void adjustOpenFilesLimit(void) {
             }
 
             /* Assume that the limit we get initially is still valid if
-             * our last try was even lower. */
+             * our last try was even lower.
+             * 当尝试设置文件描述符限制时，如果最终的 bestlimit 值小于原来的限制 oldlimit，
+             * 则将 bestlimit 重置为 oldlimit
+             */
             if (bestlimit < oldlimit) bestlimit = oldlimit;
 
+            // bestlimit < maxfiles 说明实际设置的比预期的小
             if (bestlimit < maxfiles) {
                 unsigned int old_maxclients = server.maxclients;
                 server.maxclients = bestlimit-CONFIG_MIN_RESERVED_FDS;
@@ -2684,22 +2698,44 @@ void resetServerStats(void) {
 
 /* Make the thread killable at any time, so that kill threads functions
  * can work reliably (default cancelability type is PTHREAD_CANCEL_DEFERRED).
- * Needed for pthread_cancel used by the fast memory test used by the crash report. */
+ * Needed for pthread_cancel used by the fast memory test used by the crash report.
+ *
+ * 通过将线程设置为可随时终止的状态，可以确保在需要紧急终止线程时（如内存测试过程中发生错误），
+ * 能够立即响应终止请求。
+ *
+ */
 void makeThreadKillable(void) {
+    // PTHREAD_CANCEL_ENABLE（启用取消）
+    //     启用线程取消功能, 允许其他线程通过 pthread_cancel 函数来请求终止该线程
+    // PTHREAD_CANCEL_DISABLE（禁用取消）
+    //     线程忽略所有取消请求
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+    // PTHREAD_CANCEL_DEFERRED （延迟取消，默认）
+    //    线程只在到达取消点时才会响应取消请求
+    //    取消点包括：pthread_join、pthread_cond_wait、read、write 等系统调用
+    // PTHREAD_CANCEL_ASYNCHRONOUS（异步取消）
+    //    设置线程取消类型为异步模式
+    //    线程可以在任何时间点被取消，而不是只在特定的取消点(cancellation points)被取消
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 }
 
 void initServer(void) {
     int j;
 
+    // 设置信号处理函数
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
     setupSignalHandlers();
     ThreadsManager_init();
     makeThreadKillable();
 
+    // 默认不开启
     if (server.syslog_enabled) {
+        // server.syslog_ident: 日志标识符，通常是"redis"，用于在日志中标识消息来源
+        // LOG_PID: 在每条日志消息中包含进程ID
+        // LOG_NDELAY: 立即打开连接到日志记录守护进程
+        // LOG_NOWAIT: 不等待子进程（避免在记录日志时阻塞）
+        // server.syslog_facility: 日志设施类型，定义消息的分类, 默认 LOG_LOCAL0
         openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT,
             server.syslog_facility);
     }
@@ -2748,7 +2784,11 @@ void initServer(void) {
     server.client_mem_usage_buckets = NULL;
     resetReplicationBuffer();
 
-    /* Make sure the locale is set on startup based on the config file. */
+    /* Make sure the locale is set on startup based on the config file.
+     *  使用setlocale函数根据配置文件中指定的server
+     *  LC_COLLATE: 专门设置字符串排序和比较的本地化规则，
+     *  确保Redis在不同语言环境下正确处理字符串排序
+     */
     if (setlocale(LC_COLLATE,server.locale_collate) == NULL) {
         serverLog(LL_WARNING, "Failed to configure LOCALE for invalid locale name.");
         exit(1);
@@ -2756,6 +2796,8 @@ void initServer(void) {
 
     createSharedObjects();
     adjustOpenFilesLimit();
+    // 单调时钟提供一个不会倒退的时间源，即使系统时间被修改也不会影响
+    // 保证时间测量的连续性和一致性
     const char *clk_msg = monotonicInit();
     serverLog(LL_NOTICE, "monotonic clock: %s", clk_msg);
     server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
@@ -6736,11 +6778,13 @@ static void sigShutdownHandler(int sig) {
 void setupSignalHandlers(void) {
     struct sigaction act;
 
+    // 清空阻塞信号
+    // sa_mask 指定在信号处理程序执行期间应该被阻塞的信号掩码
     sigemptyset(&act.sa_mask);
-    act.sa_flags = 0;
-    act.sa_handler = sigShutdownHandler;
-    sigaction(SIGTERM, &act, NULL);
-    sigaction(SIGINT, &act, NULL);
+    act.sa_flags = 0; // 设置调用自定义的信号处理函数
+    act.sa_handler = sigShutdownHandler; // 自定义信号处理函数（1参数）
+    sigaction(SIGTERM, &act, NULL); // kill
+    sigaction(SIGINT, &act, NULL); //  Ctrl+C
 
     setupDebugSigHandlers();
 }
