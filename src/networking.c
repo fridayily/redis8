@@ -295,7 +295,11 @@ static inline int _prepareClientToWrite(client *c) {
      *
      * If the client runs in an IO thread, we should not put the client in the
      * pending write queue. Instead, we will install the write handler to the
-     * corresponding IO thread’s event loop and let it handle the reply. */
+     * corresponding IO thread’s event loop and let it handle the reply.
+     *
+     * !clientHasPendingReplies(c) - 检查客户端当前没有待发送的数据
+     * likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID)- 检查客户端是否运行在主线程
+     */
     if (!clientHasPendingReplies(c) && likely(c->running_tid == IOTHREAD_MAIN_THREAD_ID))
         putClientInPendingWriteQueue(c);
 
@@ -2182,7 +2186,9 @@ int writeToClient(client *c, int handler_installed) {
     return C_OK;
 }
 
-/* Write event handler. Just send data to the client. */
+/* Write event handler. Just send data to the client.
+ * 命令回复处理器， 这个处理器负责将服务器执行命令后得到的命令回复通过套接字返回给客户端，
+ */
 void sendReplyToClient(connection *conn) {
     client *c = connGetPrivateData(conn);
     writeToClient(c,1);
@@ -2838,7 +2844,9 @@ int processInputBuffer(client *c) {
                 break;
             }
 
-            /* We are finally ready to execute the command. */
+            /* We are finally ready to execute the command.
+             * 开始执行命令
+             */
             if (processCommandAndResetClient(c) == C_ERR) {
                 /* If the client is no longer valid, we avoid exiting this
                  * loop and trimming the client buffer later. So we return
@@ -2880,7 +2888,10 @@ int processInputBuffer(client *c) {
 
     return C_OK;
 }
-
+/*
+ * connSockeyEventHandler->callHandler->readQueryFromClient
+ * Redis 的命令请求处理器， 这个处理器负责从套接字中读入客户端发送的命令请求内容
+ */
 void readQueryFromClient(connection *conn) {
     client *c = connGetPrivateData(conn);
     int nread, big_arg = 0;
@@ -2999,7 +3010,9 @@ void readQueryFromClient(connection *conn) {
     }
 
     /* There is more data in the client input buffer, continue parsing it
-     * and check if there is a full command to execute. */
+     * and check if there is a full command to execute.
+     * 进入命令处理接口
+     */
     if (processInputBuffer(c) == C_ERR)
          c = NULL;
 

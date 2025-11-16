@@ -5,6 +5,7 @@
 #ifndef REDIS8_0_3_DEBUG_HIREDIS_DEBUG_H
 #define REDIS8_0_3_DEBUG_HIREDIS_DEBUG_H
 
+#ifdef HIREDIS_DEBUG_ENABLE
 #define D(...) do { \
 fprintf(stderr, "hiredis:%s:%d: ", __func__, __LINE__); \
 fprintf(stderr, __VA_ARGS__); \
@@ -22,6 +23,11 @@ free(_debug_buf_); \
 } \
 } while(0)
 
+#else
+    // 禁用调试输出
+    #define D(...) do {} while(0)
+    #define D_CMD(desc,c) do {} while(0)
+#endif
 struct redisContext;
 
 char* get_redis_obuf_string(struct redisContext* c);

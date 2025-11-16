@@ -618,7 +618,11 @@ typedef enum {
 
 /* Redis maxmemory strategies. Instead of using just incremental number
  * for this defines, we use a set of flags so that testing for certain
- * properties common to multiple policies is faster. */
+ * properties common to multiple policies is faster.
+ *
+ * Redis的maxmemory策略没有使用简单的递增数字来定义，而是采用了一组标志位(flags)的方式
+ * 这样可以更快地测试多个策略共有的某些属性。
+ */
 #define MAXMEMORY_FLAG_LRU (1<<0)
 #define MAXMEMORY_FLAG_LFU (1<<1)
 #define MAXMEMORY_FLAG_ALLKEYS (1<<2)

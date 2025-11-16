@@ -316,7 +316,9 @@ kvstore *kvstoreCreate(dictType *type, int num_dicts_bits, int flags) {
     kvs->flags = flags;
 
     /* kvstore must be the one to set these callbacks, so we make sure the
-     * caller didn't do it */
+     * caller didn't do it
+     * kvstore 必须拥有设置这些回调函数的控制权, 确保调用者没有预先设置这些回调函数
+     */
     assert(!type->userdata);
     assert(!type->dictMetadataBytes);
     assert(!type->rehashingStarted);
@@ -348,6 +350,8 @@ kvstore *kvstoreCreate(dictType *type, int num_dicts_bits, int flags) {
     kvs->key_count = 0;
     kvs->non_empty_dicts = 0;
     kvs->resize_cursor = 0;
+    // 如果 kvs->num_dicts > 1, 创建一个 num_dicts+1 长度的 unsigned long long 型数组
+    // 用于创建 Fenwick tree, 记录每个 dict 的数量
     kvs->dict_size_index = kvs->num_dicts > 1? zcalloc(sizeof(unsigned long long) * (kvs->num_dicts + 1)) : NULL;
     kvs->bucket_count = 0;
     kvs->overhead_hashtable_lut = 0;

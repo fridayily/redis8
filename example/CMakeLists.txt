@@ -193,6 +193,8 @@ add_executable(select_client select_client.c)
 add_executable(poll_server poll_server.c)
 add_executable(poll_client poll_client.c)
 
+add_executable(test_madvise test_madvise.c)
+
 
 # 检测 Linux 系统并添加 epoll 文件
 if(UNIX AND NOT APPLE)

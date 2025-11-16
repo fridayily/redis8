@@ -68,7 +68,10 @@ robj *createRawStringObject(const char *ptr, size_t len) {
 
 /* Create a string object with encoding OBJ_ENCODING_EMBSTR, that is
  * an object where the sds string is actually an unmodifiable string
- * allocated in the same chunk as the object itself. */
+ * allocated in the same chunk as the object itself.
+ * OBJ_ENCODING_EMBSTR 编码的对象
+ * robj 结构体后面紧跟 sdshdr 头部和字符串数据
+ */
 robj *createEmbeddedStringObject(const char *ptr, size_t len) {
     robj *o = zmalloc(sizeof(robj)+sizeof(struct sdshdr8)+len+1);
     struct sdshdr8 *sh = (void*)(o+1);
@@ -96,9 +99,12 @@ robj *createEmbeddedStringObject(const char *ptr, size_t len) {
 /* Create a string object with EMBSTR encoding if it is smaller than
  * OBJ_ENCODING_EMBSTR_SIZE_LIMIT, otherwise the RAW encoding is
  * used.
- *
+ * 当字符串长度小于等于 OBJ_ENCODING_EMBSTR_SIZE_LIMIT（44字节）时，使用EMBSTR编码
+ * 超过该长度时，使用RAW编码
  * The current limit of 44 is chosen so that the biggest string object
- * we allocate as EMBSTR will still fit into the 64 byte arena of jemalloc. */
+ * we allocate as EMBSTR will still fit into the 64 byte arena of jemalloc.
+ * 选择44字节作为限制是为了确保EMBSTR编码的字符串对象能够适应jemalloc 64字节的内存分配区域
+ */
 #define OBJ_ENCODING_EMBSTR_SIZE_LIMIT 44
 robj *createStringObject(const char *ptr, size_t len) {
     if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT)
@@ -129,6 +135,7 @@ robj *tryCreateStringObject(const char *ptr, size_t len) {
 robj *createStringObjectFromLongLongWithOptions(long long value, int flag) {
     robj *o;
 
+    /* 如果 value 较小,则直接从共享对象中获取 */
     if (value >= 0 && value < OBJ_SHARED_INTEGERS && flag == LL2STROBJ_AUTO) {
         o = shared.integers[value];
     } else {
@@ -155,7 +162,10 @@ robj *createStringObjectFromLongLong(long long value) {
  * are needed, that is, when the object is used as a value in the key
  * space(for instance when the INCR command is used), and Redis is
  * configured to evict based on LFU/LRU, so we want LFU/LRU values
- * specific for each key. */
+ * specific for each key.
+ *
+ * 当需要 LFU/LRU 信息时，该函数避免返回共享整数对象
+ */
 robj *createStringObjectFromLongLongForValue(long long value) {
     if (server.maxmemory == 0 || !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS)) {
         /* If the maxmemory policy permits, we can still return shared integers */
@@ -383,6 +393,29 @@ void decrRefCount(robj *o) {
     }
 }
 
+/*
+ *
+ *              核心差异
+ *   特性      free函数       dismiss函数
+ *   内存管理    完全释放内存  释放物理页，保留虚拟地址
+ *   使用场景    对象销毁    fork期间优化CoW
+ *   调用结果    对象不可再访问 对象仍可访问但已释放物理内存
+ *   性能影响    彻底回收资源  减少内存复制开销
+ *
+ *  dismiss操作通过调用madvise(MADV_DONTNEED)系统调用来释放物理内存页，
+ *  保留虚拟地址空间:
+ *      robj对象及其指针仍然有效
+ *      虚拟内存映射未被删除
+ *      应用程序可以正常访问原来的地址
+ *  物理内存处理:
+ *      物理页被操作系统回收,
+ *      下次访问时触发缺页中断(page fault), 操作系统重新分配物理内存页
+ *  数据状态：
+ *      重新分配的内存页内容是未定义的（通常为零）
+ *      原有数据实际上已经丢失
+ *      但Redis在dismiss后不会再访问这些数据，所以不影响正确性
+ */
+
 /* See dismissObject() */
 void dismissSds(sds s) {
     dismissMemory(sdsAllocPtr(s), sdsAllocSize(s));
@@ -538,7 +571,16 @@ void dismissStreamObject(robj *o, size_t size_hint) {
  * the size of an individual allocation is more than a page size of OS.
  * 'size_hint' is the size of serialized value. This method is not accurate, but
  * it can reduce unnecessary iteration for complex data types that are probably
- * not going to release any memory. */
+ * not going to release any memory.
+ *
+ * 当在fork子进程中创建快照时，父子进程共享相同的物理内存页。如果父进程因写操作修改了任何键，
+ * 会导致写时复制(CoW)现象，消耗额外的物理内存。
+ *
+ * 由于遍历复杂数据类型的所有节点/字段/成员/条目成本很高，Redis采用以下优化：
+ *    只有当估计单个分配的平均大小超过操作系统页面大小时，才进行遍历和释放操作
+ *    size_hint参数是序列化值的大小，虽然不精确，
+ *    但可以减少对不太可能释放内存的复杂数据类型的不必要遍历
+ */
 void dismissObject(robj *o, size_t size_hint) {
     /* madvise(MADV_DONTNEED) may not work if Transparent Huge Pages is enabled. */
     if (server.thp_enabled) return;
@@ -598,7 +640,12 @@ void trimStringObjectIfNeeded(robj *o, int trim_small_values) {
     /* A string may have free space in the following cases:
      * 1. When an arg len is greater than PROTO_MBULK_BIG_ARG the query buffer may be used directly as the SDS string.
      * 2. When utilizing the argument caching mechanism in Lua. 
-     * 3. When calling from RM_TrimStringAllocation (trim_small_values is true). */
+     * 3. When calling from RM_TrimStringAllocation (trim_small_values is true).
+     *
+     *  字符串长度大于等于 PROTO_MBULK_BIG_ARG
+     *  trim_small_values 参数为真
+     *  当前是 Lua 脚本执行客户端且字符串长度小于 LUA_CMD_OBJCACHE_MAX_LEN
+     */
     size_t len = sdslen(o->ptr);
     if (len >= PROTO_MBULK_BIG_ARG ||
         trim_small_values||
@@ -609,7 +656,10 @@ void trimStringObjectIfNeeded(robj *o, int trim_small_values) {
     }
 }
 
-/* Try to encode a string object in order to save space */
+/* Try to encode a string object in order to save space
+ * 的Ex后缀通常表示"Extended"（扩展）
+ * 与基础版本tryObjectEncoding相比，它提供了更多的参数或功能。
+ */
 robj *tryObjectEncodingEx(robj *o, int try_trim) {
     long value;
     sds s = o->ptr;
@@ -620,6 +670,12 @@ robj *tryObjectEncodingEx(robj *o, int try_trim) {
      * representations but are handled by the commands implementing
      * the type. */
     serverAssertWithInfo(NULL,o,o->type == OBJ_STRING);
+    /*
+     (__builtin_expect(!!(o->type == 0), 1)
+     ? (void)0
+     : (_serverAssertWithInfo(((void *)0), o, "o->type == OBJ_STRING",
+                              "object.c", 551), abort()))
+     */
 
     /* We try some specialized encoding only for objects that are
      * RAW or EMBSTR encoded, in other words objects that are still
@@ -699,14 +755,24 @@ size_t getObjectLength(robj *o) {
 }
 
 /* Get a decoded version of an encoded object (returned as a new object).
- * If the object is already raw-encoded just increment the ref count. */
+ * If the object is already raw-encoded just increment the ref count.
+ * 将编码后的对象转换为解码后的对象，以便进行字符串操作
+ *
+ * 如 dictEncObjKeyCompare 函数中对两个对象进行比较
+ */
 robj *getDecodedObject(robj *o) {
     robj *dec;
 
+    // 如果对象已经是SDS编码（sdsEncodedObject(o)为真），直接增加引用计数并返回原对象
     if (sdsEncodedObject(o)) {
         incrRefCount(o);
         return o;
     }
+
+    /*
+     * 如果对象是字符串类型且使用整数编码（OBJ_ENCODING_INT）
+     * 将存储的整数值转换为字符串表示
+     */
     if (o->type == OBJ_STRING && o->encoding == OBJ_ENCODING_INT) {
         char buf[32];
 
@@ -724,7 +790,11 @@ robj *getDecodedObject(robj *o) {
  * and compare the strings, it's much faster than calling getDecodedObject().
  *
  * Important note: when REDIS_COMPARE_BINARY is used a binary-safe comparison
- * is used. */
+ * is used.
+ *
+ * 二进制安全比较（Binary-safe comparison）是指在比较数据时，
+ * 将数据视为原始字节序列进行比较，而不是将其解释为特定格式（如字符串、数字等）
+ */
 
 #define REDIS_COMPARE_BINARY (1<<0)
 #define REDIS_COMPARE_COLL (1<<1)
@@ -756,6 +826,7 @@ int compareStringObjectsWithFlags(const robj *a, const robj *b, int flags) {
 
         minlen = (alen < blen) ? alen : blen;
         cmp = memcmp(astr,bstr,minlen);
+        // 如果前 minlen 个字节都相同，但长度不同，则返回长度差值
         if (cmp == 0) return alen-blen;
         return cmp;
     }
@@ -766,7 +837,9 @@ int compareStringObjects(const robj *a, const robj *b) {
     return compareStringObjectsWithFlags(a,b,REDIS_COMPARE_BINARY);
 }
 
-/* Wrapper for compareStringObjectsWithFlags() using collation. */
+/* Wrapper for compareStringObjectsWithFlags() using collation.
+ * collation 整理; 校对
+ */
 int collateStringObjects(const robj *a, const robj *b) {
     return compareStringObjectsWithFlags(a,b,REDIS_COMPARE_COLL);
 }
@@ -973,9 +1046,15 @@ char *strEncoding(int encoding) {
  * workloads, and then adjusting the constants to get numbers that
  * more or less match the real memory usage.
  *
+ * secret recipe 秘方
+ * 这些常数是通过分析真实工作负载下的平均基数树，并调整常数来近似匹配实际内存使用情况得出的
+ *
  * Actually the number of nodes and keys may be different depending
  * on the insertion speed and thus the ability of the radix tree
- * to compress prefixes. */
+ * to compress prefixes.
+ *
+ * 节点数量和key数量可能因为插入速度不同以及基数树压缩前缀的能力不同而有所差异
+ */
 size_t streamRadixTreeMemoryUsage(rax *rax) {
     size_t size = sizeof(*rax);
     size = rax->numele * sizeof(streamID);
@@ -1002,6 +1081,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
         } else if(o->encoding == OBJ_ENCODING_RAW) {
             asize = sdsZmallocSize(o->ptr)+sizeof(*o);
         } else if(o->encoding == OBJ_ENCODING_EMBSTR) {
+            // OBJ_ENCODING_EMBSTR 对象和数据是一片连续内存
             asize = zmalloc_size((void *)o);
         } else {
             serverPanic("Unknown string encoding");

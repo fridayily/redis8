@@ -2020,6 +2020,8 @@ static void enumConfigRewrite(standardConfig *config, const char *name, struct r
     rewriteConfigEnumOption(state, name, val, config);
 }
 
+
+// 这个宏定义会放在 standardConfig 数组中, 所以这里就是对 standardConfig 进行初始化
 #define createEnumConfig(name, alias, flags, enum, config_addr, default, is_valid, apply) { \
     embedCommonConfig(name, alias, flags) \
     embedConfigInterface(enumConfigInit, enumConfigSet, enumConfigGet, enumConfigRewrite, apply) \
@@ -3066,6 +3068,8 @@ static int applyClientMaxMemoryUsage(const char **err) {
     return 1;
 }
 
+// 注意这里是一个 standardConfig 的数组
+// 里面每一项都是初始化一个 standardConfig
 standardConfig static_configs[] = {
     /* Bool configs */
     createBoolConfig("rdbchecksum", NULL, IMMUTABLE_CONFIG, server.rdb_checksum, 1, NULL, NULL),
@@ -3152,6 +3156,16 @@ standardConfig static_configs[] = {
     createEnumConfig("syslog-facility", NULL, IMMUTABLE_CONFIG, syslog_facility_enum, server.syslog_facility, LOG_LOCAL0, NULL, NULL),
     createEnumConfig("repl-diskless-load", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG | DENY_LOADING_CONFIG, repl_diskless_load_enum, server.repl_diskless_load, REPL_DISKLESS_LOAD_DISABLED, NULL, NULL),
     createEnumConfig("loglevel", NULL, MODIFIABLE_CONFIG, loglevel_enum, server.verbosity, LL_NOTICE, NULL, NULL),
+    /*
+     * "maxmemory-policy" - 配置项名称，对应 redis.conf中的maxmemory-policy 指令
+     * NULL - 配置项别名，这里没有别名
+     * MODIFIABLE_CONFIG - 配置标志，表示这个配置可以在运行时通过 CONFIG SET 命令修改
+     * maxmemory_policy_enum - 枚举类型定义，包含了所有可用的淘汰策略选项
+     * server.maxmemory_policy - 指向存储该配置值的全局变量
+     * MAXMEMORY_NO_EVICTION - 默认值，表示默认不进行内存淘汰
+     * NULL - 验证函数，这里没有特殊验证
+     * NULL - 应用函数，这里没有特殊应用逻辑
+     */
     createEnumConfig("maxmemory-policy", NULL, MODIFIABLE_CONFIG, maxmemory_policy_enum, server.maxmemory_policy, MAXMEMORY_NO_EVICTION, NULL, NULL),
     createEnumConfig("appendfsync", NULL, MODIFIABLE_CONFIG, aof_fsync_enum, server.aof_fsync, AOF_FSYNC_EVERYSEC, NULL, updateAppendFsync),
     createEnumConfig("oom-score-adj", NULL, MODIFIABLE_CONFIG, oom_score_adj_enum, server.oom_score_adj, OOM_SCORE_ADJ_NO, NULL, updateOOMScoreAdj),

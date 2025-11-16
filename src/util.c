@@ -379,7 +379,9 @@ uint32_t digits10(uint64_t v) {
     return 12 + digits10(v / 1000000000000UL);
 }
 
-/* Like digits10() but for signed values. */
+/* Like digits10() but for signed values.
+ * 用于计算将一个int64_t类型的整数转换为十进制字符串表示时所需的字符数
+ */
 uint32_t sdigits10(int64_t v) {
     if (v < 0) {
         /* Abs value of LLONG_MIN requires special handling. */

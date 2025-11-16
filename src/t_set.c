@@ -59,7 +59,9 @@ static size_t intsetMaxEntries(void) {
     return max_entries;
 }
 
-/* Converts intset to HT if it contains too many entries. */
+/* Converts intset to HT if it contains too many entries.
+ * 将 OBJ_ENCODING_INTSET 编码那些转换为 OBJ_ENCODING_HT 类型
+ */
 static void maybeConvertIntset(robj *subject) {
     serverAssert(subject->encoding == OBJ_ENCODING_INTSET);
     if (intsetLen(subject->ptr) > intsetMaxEntries())

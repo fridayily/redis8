@@ -2086,9 +2086,15 @@ void createSharedObjects(void) {
     shared.special_equals = createStringObject("=",1);
     shared.redacted = makeObjectShared(createStringObject("(redacted)",10));
 
+    /*
+     *  初始化共享整数对象的部分
+     *  创建了 0 到 OBJ_SHARED_INTEGERS-1 (通常是 10000) 的共享整数对象，
+     *  用于优化内存使用和性能
+     */
     for (j = 0; j < OBJ_SHARED_INTEGERS; j++) {
         shared.integers[j] =
             makeObjectShared(createObject(OBJ_STRING,(void*)(long)j));
+        // 初始化对象的 LRU 或 LFU 信息
         initObjectLRUOrLFU(shared.integers[j]);
         shared.integers[j]->encoding = OBJ_ENCODING_INT;
     }
@@ -3722,6 +3728,7 @@ void call(client *c, int flags) {
     if (monotonicGetType() == MONOTONIC_CLOCK_HW)
         monotonic_start = getMonotonicUs();
 
+    // 命令执行
     c->cmd->proc(c);
 
     /* Clear the CLIENT_REPROCESSING_COMMAND flag after the proc is executed. */
@@ -4383,6 +4390,7 @@ int processCommand(client *c) {
     } else {
         int flags = CMD_CALL_FULL;
         if (client_reprocessing_command) flags |= CMD_CALL_REPROCESSING;
+        // 真正执行命令的操作
         call(c,flags);
         if (listLength(server.ready_keys) && !isInsideYieldingLongCommand())
             handleClientsBlockedOnKeys();
@@ -6916,15 +6924,22 @@ void sendChildInfo(childInfoType info_type, size_t keys, char *pname) {
  * of 0 will lead the checking the real size of the allocation.
  * Also please note that the size may be not accurate, so in order to make this
  * solution effective, the judgement for releasing memory pages should not be
- * too strict. */
+ * too strict.
+ *
+ * 该函数尝试将内存页直接释放回操作系统，绕过内存分配器，目的是在 fork 期间减少写时复制(CoW)
+ */
 void dismissMemory(void* ptr, size_t size_hint) {
     if (ptr == NULL) return;
 
     /* madvise(MADV_DONTNEED) can not release pages if the size of memory
      * is too small, we try to release only for the memory which the size
-     * is more than half of page size. */
+     * is more than half of page size.
+     * 如果 size_hint 不为 0 且小于等于页面大小的一半，则不释放
+     * 这是因为 madvise(MADV_DONTNEED) 无法释放过小的内存页
+     */
     if (size_hint && size_hint <= server.page_size/2) return;
 
+    // 调用 zmadvise_dontneed(ptr) 执行内存页释放
     zmadvise_dontneed(ptr);
 }
 
