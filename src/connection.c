@@ -27,6 +27,7 @@
 #include "server.h"
 #include "connection.h"
 
+// 静态全局变量会自动初始化为0
 static ConnectionType *connTypes[CONN_TYPE_MAX];
 
 int connTypeRegister(ConnectionType *ct) {
@@ -34,7 +35,9 @@ int connTypeRegister(ConnectionType *ct) {
     ConnectionType *tmpct;
     int type;
 
-    /* find an empty slot to store the new connection type */
+    /* find an empty slot to store the new connection type
+     * 遍历 connTypes 数组寻找可用位置
+     */
     for (type = 0; type < CONN_TYPE_MAX; type++) {
         tmpct = connTypes[type];
         if (!tmpct)

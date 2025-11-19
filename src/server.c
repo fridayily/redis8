@@ -3005,7 +3005,11 @@ void initListeners(void) {
         listener = &server.listeners[j];
         if (listener->ct == NULL)
             continue;
-
+        // 创建 socket 服务端
+        // 创建监听套接字 + 绑定套接字 + 监听套接字
+        //  _anetTcpServer() 函数 创建套接字
+        //  anetSetReuseAddr() 函数设置套接字选项 SO_REUSEADDR
+        //  anetListen() 函数 bind + listen
         if (connListen(listener) == C_ERR) {
             serverLog(LL_WARNING, "Failed listening on port %u (%s), aborting.", listener->port, listener->ct->get_type(NULL));
             exit(1);
@@ -7211,6 +7215,7 @@ static int redisSupervisedUpstart(void) {
         return 0;
     }
 
+    // 输出日志并发送SIGSTOP信号通知Upstart服务已准备就绪
     serverLog(LL_NOTICE, "supervised by upstart, will stop to signal readiness.");
     raise(SIGSTOP);
     unsetenv("UPSTART_JOB");
@@ -7232,6 +7237,18 @@ static int redisSupervisedSystemd(void) {
 #endif
 }
 
+/*
+ * systemd 的优势
+ * 精确的生命周期管理
+ *    就绪检测：systemd可以准确知道Redis何时完全启动并准备好接受连接
+ *    停止同步：systemd可以正确处理Redis的停止过程，确保数据安全持久化
+ *    错误状态传递：Redis可以将错误状态传递给systemd，便于问题诊断
+ * 高级服务管理功能
+ *    自动重启策略：systemd可以根据Redis的退出状态决定是否重启
+ *    启动依赖管理：可以设置正确的服务依赖关系，确保按正确顺序启动服务
+ *    资源控制：通过systemd的资源控制机制限制Redis的内存、CPU使用
+ *    日志集成：与journald深度集成，统一日志管理
+ */
 int redisIsSupervised(int mode) {
     int ret = 0;
 
@@ -7423,6 +7440,12 @@ int main(int argc, char **argv) {
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
     moduleInitModulesSystem();
+    /*
+     * 关键函数
+     * 注册 TCP socket 连接 和 Unix Socket 连接
+     * 注册到全局变量 connTypes 中
+     * TLS支持是可选的
+     */
     connTypeInitialize();
 
     /* Store the executable path and arguments in a safe place in order
@@ -7637,6 +7660,7 @@ int main(int argc, char **argv) {
         moduleLoadInternalModules();
         moduleLoadFromQueue();
     }
+    /* 负责从配置文件或专用 ACL 文件中加载用户认证和权限信息 */
     ACLLoadUsersAtStartup();
     initListeners();
     if (server.cluster_enabled) {

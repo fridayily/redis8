@@ -433,7 +433,7 @@ int connTypeHasPendingData(struct aeEventLoop *el);
 /* walk all the connection types and process pending data for each connection type */
 int connTypeProcessPendingData(struct aeEventLoop *el);
 
-/* Listen on an initialized listener */
+/* Listen on an initialized listener 默认 connSocketListen */
 static inline int connListen(connListener *listener) {
     return listener->ct->listen(listener);
 }

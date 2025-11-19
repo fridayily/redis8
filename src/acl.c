@@ -42,6 +42,11 @@ static unsigned long nextid = 0; /* Next command id that has not been assigned *
 
 #define ACL_MAX_CATEGORIES 64 /* Maximum number of command categories  */
 
+/*
+ * 允许用户执行所有读操作：ACL SETUSER user1 +@read
+ * 禁止用户执行危险命令：ACL SETUSER user1 -@dangerous
+ * 允许用户只使用特定数据结构：ACL SETUSER user1 +@string +@hash -@all
+ */
 struct ACLCategoryItem {
     char *name;
     uint64_t flag;
@@ -1410,7 +1415,14 @@ const char *ACLSetUserStringError(void) {
     return errmsg;
 }
 
-/* Create the default user, this has special permissions. */
+/* Create the default user, this has special permissions.
+ *
+ * ~*: 设置键模式匹配规则为 *，表示默认用户可以访问所有键（无任何键名限制）
+ * &*: 设置频道模式匹配规则为 *，表示默认用户可以订阅所有频道（无任何频道限制）
+ * +@all: 允许所有命令，包括所有子命令
+ * ~@all: 拒绝所有命令，包括所有子命令
+ * nopass: 设置用户不需要密码即可认证
+ */
 user *ACLCreateDefaultUser(void) {
     user *new = ACLCreateUser("default",7);
     ACLSetUser(new,"+@all",-1);

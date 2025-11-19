@@ -101,7 +101,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    // 2. 设置套接字选项
+    // 2. 设置套接字选项 允许在套接字关闭后立即重用相同的地址和端口，而不需要等待TIME_WAIT状态超时
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
         perror("setsockopt failed");
         exit(EXIT_FAILURE);
