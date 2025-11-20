@@ -207,7 +207,9 @@ void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx) {
     curr_functions_lib_ctx = new_lib_ctx;
 }
 
-/* return the current functions ctx */
+/* return the current functions ctx
+ * functionsInit() 中对 curr_functions_lib_ctx 进行了初始化
+ */
 functionsLibCtx* functionsLibCtxGetCurrent(void) {
     return curr_functions_lib_ctx;
 }

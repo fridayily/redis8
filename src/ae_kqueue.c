@@ -187,6 +187,7 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
             //     同一个 fd 被处理两次
             //     无法控制读写事件的处理顺序
             //     无法正确处理 AE_BARRIER 标志
+            // eventsMask 是一个数组，修改相同 fd 的值
             addEventMask(state->eventsMask, fd, mask);
         }
 
@@ -204,6 +205,8 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
                 // 包含读写事件的合并掩码
                 eventLoop->fired[numevents].mask = mask;
                 // 清除已处理的掩码
+                // 当下次相同的 fd 执行  getEventMask(state->eventsMask, fd) 时
+                // 获取的是空的，故不会再次进入
                 resetEventMask(state->eventsMask, fd);
                 numevents++;
             }

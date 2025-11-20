@@ -142,7 +142,12 @@ ssize_t rdbSaveMillisecondTime(rio *rdb, long long t) {
  *
  * On I/O error the function returns LLONG_MAX, however if this is also a
  * valid stored value, the caller should use rioGetReadError() to check for
- * errors after calling this function. */
+ * errors after calling this function.
+ *
+ * 在 Redis 5.0（RDB 版本 9）之前，RDB 文件中的时间戳数据没有正确处理字节序问题
+ * 只对 RDB 版本 9 及以上的文件应用正确的字节序转换
+ * 对旧版本 RDB 文件保持原有行为，允许大端系统继续加载自己创建的旧文件
+ */
 long long rdbLoadMillisecondTime(rio *rdb, int rdbver) {
     int64_t t64;
     if (rioRead(rdb,&t64,8) == 0) return LLONG_MAX;
@@ -3330,6 +3335,7 @@ done:
 int rdbLoadRio(rio *rdb, int rdbflags, rdbSaveInfo *rsi) {
     functionsLibCtx* functions_lib_ctx = functionsLibCtxGetCurrent();
     rdbLoadingCtx loading_ctx = { .dbarray = server.db, .functions_lib_ctx = functions_lib_ctx };
+    // 调用核心加载函数，传入rio流、标志、保存信息和加载上下文。
     int retval = rdbLoadRioWithLoadingCtx(rdb,rdbflags,rsi,&loading_ctx);
     return retval;
 }
@@ -3349,14 +3355,17 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
     int error;
     long long empty_keys_skipped = 0;
 
+    /* 初始化与文件头验证 */
     rdb->update_cksum = rdbLoadProgressCallback;
     rdb->max_processing_chunk = server.loading_process_events_interval_bytes;
     if (rioRead(rdb,buf,9) == 0) goto eoferr;
     buf[9] = '\0';
+    // 读取并验证 RDB 文件签名（"REDIS"）
     if (memcmp(buf,"REDIS",5) != 0) {
         serverLog(LL_WARNING,"Wrong signature trying to load DB from file");
         return C_ERR;
     }
+    // 解析并验证 RDB 版本号
     rdbver = atoi(buf+5);
     if (rdbver < 1 || rdbver > RDB_VERSION) {
         serverLog(LL_WARNING,"Can't handle RDB format version %d",rdbver);

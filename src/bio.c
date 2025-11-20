@@ -67,6 +67,12 @@ static unsigned int bio_job_to_worker[] = {
 };
 
 static pthread_t bio_threads[BIO_WORKER_NUM];
+/*
+ * sizeof(pthread_mutex_t) = 64
+ * sizeof(pthread_cond_t) = 48
+ * 静态存储区的内存会被清零
+ * bioInit 会对其进行初始化
+ */
 static pthread_mutex_t bio_mutex[BIO_WORKER_NUM];
 static pthread_cond_t bio_newjob_cond[BIO_WORKER_NUM];
 static list *bio_jobs[BIO_WORKER_NUM];
@@ -132,8 +138,10 @@ void bioInit(void) {
 
     /* Initialization of state vars and objects */
     for (j = 0; j < BIO_WORKER_NUM; j++) {
+        // 初始化互斥锁和条件变量
         pthread_mutex_init(&bio_mutex[j],NULL);
         pthread_cond_init(&bio_newjob_cond[j],NULL);
+        // 创建任务队列
         bio_jobs[j] = listCreate();
     }
 
@@ -152,7 +160,10 @@ void bioInit(void) {
         exit(1);
     }
 
-    /* Register a readable event for the pipe used to awake the event loop on job completion */
+    /* Register a readable event for the pipe used to awake the event loop on job completion
+     * 注册对 job_comp_pipe[0] (管道读端) 的可读事件监听
+     * 当有数据可读时，会调用 bioPipeReadJobCompList 回调函数
+     */
     if (aeCreateFileEvent(server.el, job_comp_pipe[0], AE_READABLE,
                           bioPipeReadJobCompList, NULL) == AE_ERR) {
         serverPanic("Error registering the readable event for the bio pipe.");
@@ -161,13 +172,22 @@ void bioInit(void) {
     /* Set the stack size as by default it may be small in some system */
     pthread_attr_init(&attr);
     pthread_attr_getstacksize(&attr,&stacksize);
+    // 为了处理某些系统可能返回0的特殊情况，确保后续计算有效。
     if (!stacksize) stacksize = 1; /* The world is full of Solaris Fixes */
+    /*
+     * 使用倍增算法确保栈不小于REDIS_THREAD_STACK_SIZE
+     */
     while (stacksize < REDIS_THREAD_STACK_SIZE) stacksize *= 2;
     pthread_attr_setstacksize(&attr, stacksize);
 
     /* Ready to spawn our threads. We use the single argument the thread
      * function accepts in order to pass the job ID the thread is
-     * responsible for. */
+     * responsible for.
+     *
+     * 为 "bio_close_file","bio_aof","bio_lazy_free" 分别创建一个工作线程
+     * 即每个工作线程内部采用串行方式处理任务
+     * 一个工作线程在处理完当前任务并将其从队列中删除前，不会尝试获取下一个任务
+     */
     for (j = 0; j < BIO_WORKER_NUM; j++) {
         void *arg = (void*)(unsigned long) j;
         if (pthread_create(&thread,&attr,bioProcessBackgroundJobs,arg) != 0) {
@@ -280,7 +300,9 @@ void *bioProcessBackgroundJobs(void *arg) {
     while(1) {
         listNode *ln;
 
-        /* The loop always starts with the lock hold. */
+        /* The loop always starts with the lock hold.
+         * 如果队列为空，等待任务
+         */
         if (listLength(bio_jobs[worker]) == 0) {
             pthread_cond_wait(&bio_newjob_cond[worker], &bio_mutex[worker]);
             continue;
@@ -340,12 +362,16 @@ void *bioProcessBackgroundJobs(void *arg) {
         } else if ((job_type == BIO_COMP_RQ_CLOSE_FILE) ||
                    (job_type == BIO_COMP_RQ_AOF_FSYNC) ||
                    (job_type == BIO_COMP_RQ_LAZY_FREE)) {
+            // 如果是请求类型任务，会创建一个 bio_comp_item 结构体
+            // 填充回调函数指针func、用户数据arg和指针参数ptr
             bio_comp_item *comp_rsp = zmalloc(sizeof(bio_comp_item));
             comp_rsp->func = job->comp_rq.fn;
             comp_rsp->arg = job->comp_rq.arg;
             comp_rsp->ptr = job->comp_rq.ptr;
 
-            /* just write it to completion job responses */
+            /* just write it to completion job responses
+             * 将完成项添加到链表尾部
+             */
             pthread_mutex_lock(&bio_mutex_comp);
             listAddNodeTail(bio_comp_list, comp_rsp);
             pthread_mutex_unlock(&bio_mutex_comp);
@@ -412,6 +438,9 @@ void bioKillThreads(void) {
     }
 }
 
+/*
+ * 一次性将所有完成项从 bio_comp_list 中取出并处理
+ */
 void bioPipeReadJobCompList(aeEventLoop *el, int fd, void *privdata, int mask) {
     UNUSED(el);
     UNUSED(mask);
@@ -419,20 +448,25 @@ void bioPipeReadJobCompList(aeEventLoop *el, int fd, void *privdata, int mask) {
 
     char buf[128];
     list *tmp_list = NULL;
-
+    // 读取管道中的所有数据（清空管道）
     while (read(fd, buf, sizeof(buf)) == sizeof(buf));
 
     /* Handle event loop events if pipe was written from event loop API */
     pthread_mutex_lock(&bio_mutex_comp);
     if (listLength(bio_comp_list)) {
+        // 1. tmp_list指向原来的bio_comp_list
         tmp_list = bio_comp_list;
+        // 2. bio_comp_list指向新创建的空链表
         bio_comp_list = listCreate();
     }
     pthread_mutex_unlock(&bio_mutex_comp);
 
     if (!tmp_list) return;
 
-    /* callback to all job completions  */
+    /* callback to all job completions
+     * 获取并清空bio_comp_list中的所有完成项
+     * 为每个完成项调用注册的回调函数：rsp->func(rsp->arg, rsp->ptr)
+     */
     while (listLength(tmp_list)) {
         listNode *ln = listFirst(tmp_list);
         bio_comp_item *rsp = ln->value;

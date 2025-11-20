@@ -118,7 +118,12 @@ static inline size_t rioWrite(rio *r, const void *buf, size_t len) {
 }
 
 static inline size_t rioRead(rio *r, void *buf, size_t len) {
+    /* 检查是否已存在读取错误标志 RIO_FLAG_READ_ERROR，如果存在则立即返回 0（表示失败） */
     if (r->flags & (RIO_FLAG_READ_ERROR)) return 0;
+    /*
+     * 使用循环确保读取完整请求的数据
+     * 通过 max_processing_chunk 控制单次读取的最大字节数，防止一次处理过大的数据块
+     */
     while (len) {
         size_t bytes_to_read = (r->max_processing_chunk && r->max_processing_chunk < len) ? r->max_processing_chunk : len;
         if (r->read(r,buf,bytes_to_read) == 0) {
@@ -126,6 +131,9 @@ static inline size_t rioRead(rio *r, void *buf, size_t len) {
             return 0;
         }
         if (r->update_cksum) r->update_cksum(r,buf,bytes_to_read);
+        /* 移动缓冲区指针、减少剩余读取长度
+         * 更新已处理的总字节数 processed_bytes
+         */
         buf = (char*)buf + bytes_to_read;
         len -= bytes_to_read;
         r->processed_bytes += bytes_to_read;

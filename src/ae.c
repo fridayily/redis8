@@ -466,6 +466,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
      *
      * eventLoop->maxfd != -1 说明已经注册了文件事件
      * 否则没有注册,只有时间事件,这种情况下也会调用 aeApiPoll() 来休眠指定的时间
+     *      AE_DONT_WAIT 是使事件循环非阻塞地执行
+     *      如果设置为真，事件循环立即返回，不会在事件多路复用 API 上阻塞等待事件
      */
     if (eventLoop->maxfd != -1 ||
         ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
@@ -481,8 +483,19 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
          * So we should check it after beforesleep be called. At the same time,
          * the parameter flags always should have the highest priority.
          * That is to say, once the parameter flag is set to AE_DONT_WAIT,
-         * no matter what value eventLoop->flags is set to, we should ignore it. */
-        // 计算等待时间
+         * no matter what value eventLoop->flags is set to, we should ignore it.
+         *
+         * beforesleep 回调可能会在执行过程中修改事件循环的标志
+         * 因此必须在回调执行后再检查这些标志的状态
+         *
+         * 这里实现了三种不同的超时计算策略
+         * 1.非阻塞模式： 当任一标志包含 AE_DONT_WAIT 时
+         *      设置超时时间为0，使IO多路复用函数立即返回，不等待任何事件
+         * 2.基于时间事件的等待：当需要处理的时间事件且没有设置 AE_DONT_WAIT 时
+         *      计算到下一个时间事件的等待时间
+         * 3.无限等待：其他情况
+         *      如只处理文件时间且未设置 AE_DONT_WAIT
+         */
         if ((flags & AE_DONT_WAIT) || (eventLoop->flags & AE_DONT_WAIT)) {
             tv.tv_sec = tv.tv_usec = 0;
             tvp = &tv;
@@ -497,13 +510,6 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         }
         /* Call the multiplexing API, will return only on timeout or when
          * some event fires. */
-        // 调用底层多路复用API等待事件
-        // 在这里会阻塞, tvp 决定
-        // 如果 flag 只有 AE_TIME_EVENTS, 则会阻塞 tvp 时长,然后去处理时间事件
-        // 如果 flag 只有 AE_FILE_EVENTS, 则无限等待文件事件的发生
-        // 如果 flag 两种事件都有设置
-        //      如果设置了 AE_FILE_EVENTS, 立即返回
-        //      否则会至多等待 tvp 时长
         numevents = aeApiPoll(eventLoop, tvp);
 
         /* Don't process file events if not requested. */
@@ -545,8 +551,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * Fire the readable event if the call sequence is not
              * inverted.
              *
-             * AE_BARRIER 事件屏障
-             * 设置了 invert , 先处理事件, 再处理写事件
+             * 正常情况下先处理可读事件，再处理可写事件
+             * 设则 AE_BARRIER 事件屏障后，invert 为1，按照相反逻辑处理
              */
             if (!invert && fe->mask & mask & AE_READABLE) {
                 // redisAeReadEvent
