@@ -729,7 +729,7 @@ static void redisPushAutoFree(void *privdata, void *reply) {
 
 /*
  * 初始化 redisContext
- * 1.设置同步读写函数、异步读写函数、关闭 fd 函数
+ * 1.设置同步读写函数、异步读写函数、关闭 fd 函数 (redisContextDefaultFuncs)
  * 2.设置处理服务端返回的 StringObject, ArrayObject 的函数
  */
 static redisContext *redisContextInit(void) {

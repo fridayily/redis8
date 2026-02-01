@@ -139,7 +139,7 @@ struct connListener {
  * connAccept() callers must always check the return value and on error (C_ERR)
  * a connClose() must be called.
  */
-
+// 连接时 accept 函数是 connSocketAccept
 static inline int connAccept(connection *conn, ConnectionCallbackFunc accept_handler) {
     return conn->type->accept(conn, accept_handler);
 }

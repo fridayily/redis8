@@ -73,6 +73,10 @@ static connection *connCreateSocket(struct aeEventLoop *el) {
  * Callers should use connGetState() and verify the created connection
  * is not in an error state (which is not possible for a socket connection,
  * but could but possible with other protocols).
+ *
+ * 调用`connCreateSocket`创建基础连接对象
+ * 将传入的文件描述符（已接受连接的套接字）关联到连接对象
+ * 设置连接状态为`CONN_STATE_ACCEPTING`
  */
 static connection *connCreateAcceptedSocket(struct aeEventLoop *el, int fd, void *priv) {
     UNUSED(priv);
@@ -283,7 +287,9 @@ static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientD
     int call_write = (mask & AE_WRITABLE) && conn->write_handler;
     int call_read = (mask & AE_READABLE) && conn->read_handler;
 
-    /* Handle normal I/O flows */
+    /* Handle normal I/O flows
+     * 这里 callHandler 可能报错，就直接返回了
+     */
     if (!invert && call_read) {
         if (!callHandler(conn, conn->read_handler)) return;
     }
@@ -306,6 +312,10 @@ static void connSocketAcceptHandler(aeEventLoop *el, int fd, void *privdata, int
     UNUSED(privdata);
 
     while(max--) {
+        /*
+         * accept 从已完成连接队列中取出一个连接，返回一个新的套接字描述符，
+         * 该描述符用于与客户端进行数据通信。原监听套接字保持不变，继续接受其他连接请求。
+         */
         cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
         if (cfd == ANET_ERR) {
             if (anetAcceptFailureNeedsRetry(errno))

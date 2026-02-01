@@ -111,7 +111,24 @@ int anetCloexec(int fd) {
 }
 
 /* Enable TCP keep-alive mechanism to detect dead peers,
- * TCP_KEEPIDLE, TCP_KEEPINTVL and TCP_KEEPCNT will be set accordingly. */
+ * TCP_KEEPIDLE, TCP_KEEPINTVL and TCP_KEEPCNT will be set accordingly.
+ *
+ *  1. 启用保活机制：设置套接字的 SO_KEEPALIVE 选项
+ *  2. 配置保活参数：根据不同平台设置相应的 TCP 保活参数（空闲时间、探测间隔、探测次数）
+ *
+ *  TCP_KEEPIDLE：设置连接空闲后首次发送探测包的时间（秒）
+ *  TCP_KEEPINTVL：设置连续探测包之间的间隔时间（秒）
+ *  TCP_KEEPCNT：设置无响应后发送的探测包数量
+ *  启用TCP保活后，连接处理遵循以下流程：
+ *      空闲检测：当连接空闲时间达到 TCP_KEEPIDLE/TCP_KEEPALIVE 设置值时，系统开始保活过程
+ *      发送探测包：发送第一个保活探测包给对端
+ *      响应处理：
+ *      如果收到响应，重置空闲计时器
+ *      如果未收到响应，等待 TCP_KEEPINTVL 时间后再次发送探测包
+ *      失败判定：如果连续 TCP_KEEPCNT 个探测包都没有收到响应，则判定连接已断开
+ *      资源释放：系统会关闭该连接，释放相关资源
+ *
+ */
 int anetKeepAlive(char *err, int fd, int interval)
 {
     int enabled = 1;
@@ -256,6 +273,11 @@ int anetKeepAlive(char *err, int fd, int interval)
 
 static int anetSetTcpNoDelay(char *err, int fd, int val)
 {
+    /*
+     * TCP_NODELAY 选项用于控制 TCP 的 Nagle 算法：
+     *    1: 禁用 Nagle 算法，确保数据包立即发送，不进行缓冲等待
+     *    0: 启用 Nagle 算法，允许小数据包合并
+     */
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)) == -1)
     {
         anetSetError(err, "setsockopt TCP_NODELAY: %s", strerror(errno));
@@ -611,6 +633,15 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
 #ifdef HAVE_ACCEPT4
         fd = accept4(s, sa, len,  SOCK_NONBLOCK | SOCK_CLOEXEC);
 #else
+        /*
+         * 在TCP三次握手过程中，客户端的IP地址和端口号已经通过SYN报文传输给服务器
+         * 内核维护已完成三次握手的连接队列，每个队列项包含完整的客户端连接信息
+         * accept 从已完成队列中取第一个连接
+         * 创建一个新的套接字描述符来表示这个连接
+         *
+         * 对于一个基本的 IPv4 TCP 连接场景
+         *  文件描述符占用：服务端2个 ，客户端占用1个
+         */
         fd = accept(s,sa,len);
 #endif
     } while(fd == -1 && errno == EINTR);

@@ -3006,10 +3006,15 @@ void initListeners(void) {
         if (listener->ct == NULL)
             continue;
         // 创建 socket 服务端
-        // 创建监听套接字 + 绑定套接字 + 监听套接字
-        //  _anetTcpServer() 函数 创建套接字
-        //  anetSetReuseAddr() 函数设置套接字选项 SO_REUSEADDR
-        //  anetListen() 函数 bind + listen
+        /* note: 重要函数
+         *  创建监听套接字 + 绑定套接字 + 监听套接字
+         *   _anetTcpServer() 函数 创建套接字
+         *   anetSetReuseAddr() 函数设置套接字选项 SO_REUSEADDR
+         *   anetListen() 函数 bind + listen
+         *
+         * initListeners->connListen->connSocketListen->listenToPort->
+         * anetTcpServer->_anetTcpServer->getaddrinfo->socket
+         */
         if (connListen(listener) == C_ERR) {
             serverLog(LL_WARNING, "Failed listening on port %u (%s), aborting.", listener->port, listener->ct->get_type(NULL));
             exit(1);

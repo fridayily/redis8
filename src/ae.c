@@ -68,7 +68,7 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->aftersleep = NULL;
     eventLoop->flags = 0;
     memset(eventLoop->privdata, 0, sizeof(eventLoop->privdata));
-    // 创建 epoll, kqueue 实例
+    // note: 创建 epoll, kqueue 实例
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it.
@@ -436,16 +436,19 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  * if flags has AE_CALL_BEFORE_SLEEP set, the beforesleep callback is called.
  *
  * The function returns the number of events processed.
- *
- * 创建和初始化
- * aeCreateEventLoop->aeApiCreate
- *        执行  state->kqfd = kqueue();
- * 添加事件
- * aeCreateFileEvent->aeApiAddEvent
- *        执行  kevent(state->kqfd, &ke, 1, NULL, 0, NULL)
- * 事件轮询
- * aeProcessEvents->aeApiPoll
- *         执行  retval = kevent(state->kqfd, NULL, 0, state->events, eventLoop->setsize,NULL)
+ * note:
+ *  创建和初始化
+ *  aeCreateEventLoop->aeApiCreate
+ *        执行  mac: state->kqfd = kqueue();
+ *             linux: state->epfd = epoll_create(1024);
+ *  添加事件
+ *  aeCreateFileEvent->aeApiAddEvent
+ *        执行  mac: kevent(state->kqfd, &ke, 1, NULL, 0, NULL)
+ *             linux: epoll_ctl(state->epfd,op,fd,&ee)
+ *  事件轮询
+ *  aeProcessEvents->aeApiPoll
+ *         执行  mac: retval = kevent(state->kqfd, NULL, 0, state->events, eventLoop->setsize,NULL)
+ *              linux: retval = epoll_wait(state->epfd,state->events,eventLoop->setsize,tvp)
  */
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
@@ -525,7 +528,13 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         // D_CONSOLE("%d events need process",numevents);
         for (j = 0; j < numevents; j++) {
             int fd = eventLoop->fired[j].fd;
-            // 从已就绪数组中获取事件
+            /* 从已就绪数组中获取事件, 里面有事件处理函数，
+             *  如对于连接请求是: connSocketAcceptHandler connSocketEventHandler
+             *
+             *  events 数组中可能存在重复的 fd, 因为 kqueue 读写事件是分开的，即读写事件对应不同的 mask
+             *  fired 数组对 events 根据 fd 进行去重, 合并了 mask
+             *
+             */
             aeFileEvent *fe = &eventLoop->events[fd];
             int mask = eventLoop->fired[j].mask;
             int fired = 0; /* Number of events fired for current fd. */
@@ -555,7 +564,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * 设则 AE_BARRIER 事件屏障后，invert 为1，按照相反逻辑处理
              */
             if (!invert && fe->mask & mask & AE_READABLE) {
-                // redisAeReadEvent
+                // redisAeReadEvent  对于连接：connSocketAcceptHandler, 命令：connSocketEventHandler
                 fe->rfileProc(eventLoop,fd,fe->clientData,mask);
                 fired++;
                 // aeCreateFileEvent 可能重新分配 eventLoop->events

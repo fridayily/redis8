@@ -161,7 +161,9 @@ void *ztrymalloc(size_t size) {
 }
 
 /* Allocate memory or panic.
- * '*usable' is set to the usable size if non NULL. */
+ * '*usable' is set to the usable size if non NULL.
+ * 返回值：分配的内存指针，同时通过第二个参数返回实际可用大小
+ */
 void *zmalloc_usable(size_t size, size_t *usable) {
     size_t usable_size = 0;
     void *ptr = ztrymalloc_usable_internal(size, &usable_size);

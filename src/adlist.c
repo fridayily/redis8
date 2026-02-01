@@ -214,7 +214,10 @@ void listReleaseIterator(listIter *iter) {
     zfree(iter);
 }
 
-/* Create an iterator in the list private iterator structure */
+/* Create an iterator in the list private iterator structure
+ * 重置迭代位置：将迭代器的 next 指针设置为链表的头节点 list->head
+ * 设置遍历方向：将迭代器的 direction 设为 AL_START_HEAD，表示从链表头部开始遍历
+ */
 void listRewind(list *list, listIter *li) {
     li->next = list->head;
     li->direction = AL_START_HEAD;

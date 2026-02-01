@@ -87,12 +87,22 @@ void freeClientReplyValue(void *o) {
 }
 
 /* This function links the client to the global linked list of clients.
- * unlinkClient() does the opposite, among other things. */
+ * unlinkClient() does the opposite, among other things.
+ *
+ * 双向链表添加：使用listAddNodeTail将客户端添加到server.clients双向链表末尾
+ * 节点引用保存：将新添加节点的指针保存在c->client_list_node中，
+ *              为后续O(1)时间复杂度的删除操作做准备
+ * RAX索引插入：
+ *    将客户端ID转换为网络字节序（htonu64）确保跨平台一致性
+ *    使用 raxInsert 将客户端添加到 server.clients_index 基数树索引中，以支持通过ID高效查找客户端
+ */
 void linkClient(client *c) {
     listAddNodeTail(server.clients,c);
     /* Note that we remember the linked list node where the client is stored,
      * this way removing the client in unlinkClient() will not require
-     * a linear scan, but just a constant time operation. */
+     * a linear scan, but just a constant time operation.
+     * 这里返回的是 list_node 地址而不是 c 的地址
+     */
     c->client_list_node = listLast(server.clients);
     uint64_t id = htonu64(c->id);
     raxInsert(server.clients_index,(unsigned char*)&id,sizeof(id),c,NULL);
@@ -131,10 +141,17 @@ client *createClient(connection *conn) {
         connSetReadHandler(conn, readQueryFromClient);
         connSetPrivateData(conn, c);
     }
+    // 分配输出缓冲区
     c->buf = zmalloc_usable(PROTO_REPLY_CHUNK_BYTES, &c->buf_usable_size);
     selectDb(c,0);
     uint64_t client_id;
     atomicGetIncr(server.next_client_id, client_id, 1);
+    /*
+     * 设置客户端 id
+     * tid 客户端绑定的线程ID
+     * running_tid 客户端当前运行的线程ID
+     * 记录每个IO线程当前管理的客户端数量
+     */
     c->id = client_id;
     c->tid = IOTHREAD_MAIN_THREAD_ID;
     c->running_tid = IOTHREAD_MAIN_THREAD_ID;
@@ -220,6 +237,10 @@ client *createClient(connection *conn) {
     listInitNode(&c->clients_pending_write_node, c);
     c->mem_usage_bucket = NULL;
     c->mem_usage_bucket_node = NULL;
+    /*
+     * 将 c 放到 server.clients 队列中
+     * 并将 c.id 放到一个 RAX 中，方便查找
+     */
     if (conn) linkClient(c);
     initClientMultiState(c);
     return c;
@@ -1333,6 +1354,14 @@ int clientHasPendingReplies(client *c) {
     return _clientHasPendingRepliesNonSlave(c);
 }
 
+/*
+ *
+ * 1. 连接状态验证：检查连接是否成功转为 CONN_STATE_CONNECTED 状态
+ * 2. 保护模式检查：对于未设置密码的保护模式，拒绝非本地连接
+ * 3. 连接统计更新：增加连接计数 server.stat_numconnections
+ * 4. 模块事件触发：通过 moduleFireServerEvent 通知模块有新客户端连接
+ * 5. IO 线程分配：如果启用了多线程，将客户端分配给合适的 IO 线程
+ */
 void clientAcceptHandler(connection *conn) {
     client *c = connGetPrivateData(conn);
 
@@ -1410,7 +1439,12 @@ void acceptCommonHandler(connection *conn, int flags, char *ip) {
      *
      * Admission control will happen before a client is created and connAccept()
      * called, because we don't want to even start transport-level negotiation
-     * if rejected. */
+     * if rejected.
+     *
+     * Admission control 准入控制
+     * 尽早拒绝，避免在已经知道要拒绝连接的情况下，仍然分配资源创建客户端对象
+     * 或执行传输层协商（如TLS握手）
+     */
     if (listLength(server.clients) + getClusterConnectionsCount()
         >= server.maxclients)
     {
@@ -1423,7 +1457,10 @@ void acceptCommonHandler(connection *conn, int flags, char *ip) {
 
         /* That's a best effort error message, don't check write errors.
          * Note that for TLS connections, no handshake was done yet so nothing
-         * is written and the connection will just drop. */
+         * is written and the connection will just drop.
+         *
+         * 在TLS握手机制下，由于还未完成握手，错误消息实际上无法被客户端接收，连接将直接断开。
+         */
         if (connWrite(conn,err,strlen(err)) == -1) {
             /* Nothing to do, Just to avoid the warning... */
         }
@@ -1455,6 +1492,9 @@ void acceptCommonHandler(connection *conn, int flags, char *ip) {
      * 2. Schedule a future call to clientAcceptHandler().
      *
      * Because of that, we must do nothing else afterwards.
+     *
+     * connAccept 会调用 connSocketAccept 设置 conn->state = CONN_STATE_CONNECTED;
+     * 并且立即执行 clientAcceptHandler 一次
      */
     if (connAccept(conn, clientAcceptHandler) == C_ERR) {
         if (connGetState(conn) == CONN_STATE_ERROR)
@@ -1533,12 +1573,16 @@ int anyOtherSlaveWaitRdb(client *except_me) {
 void unlinkClient(client *c) {
     listNode *ln;
 
-    /* If this is marked as current client unset it. */
+    /* If this is marked as current client unset it.
+     * 如果当前客户端被标记为server.current_client，则将其取消设置
+     */
     if (c->conn && server.current_client == c) server.current_client = NULL;
 
     /* Certain operations must be done only if the client has an active connection.
      * If the client was already unlinked or if it's a "fake client" the
-     * conn is already set to NULL. */
+     * conn is already set to NULL.
+     * 只对有活动连接的客户端执行移除操作
+     */
     if (c->conn) {
         /* Remove from the list of active clients. */
         if (c->client_list_node) {
@@ -2889,7 +2933,7 @@ int processInputBuffer(client *c) {
     return C_OK;
 }
 /*
- * connSockeyEventHandler->callHandler->readQueryFromClient
+ * connSocketEventHandler->callHandler->readQueryFromClient
  * Redis 的命令请求处理器， 这个处理器负责从套接字中读入客户端发送的命令请求内容
  */
 void readQueryFromClient(connection *conn) {
@@ -2969,6 +3013,18 @@ void readQueryFromClient(connection *conn) {
         readlen = sdsavail(c->querybuf);
     }
     nread = connRead(c->conn, c->querybuf+qblen, readlen);
+    /*
+     * 当connRead 返回 0 时，表示客户端正常关闭了连接（收到FIN包）
+     *     会进行 4 次挥手
+     *          客户端发送 FIN 包到服务端
+     *          服务端收到 FIN 包，立即回复一个 ACK 包表示确认
+     *          服务端发送 FIN 包到客户端
+     *              服务端如果有数据要发送，发送完成后调用关闭连接的函数
+     *              否则直接关闭
+     *              然后再发送 FIN 包，这是服务端应用程序控制的
+     *          客户端收到 FIN 包，发送 ACK 包到服务端，连接关闭
+     * 当connRead返回 -1 且连接状态不再是CONN_STATE_CONNECTED时，表示连接异常断开
+     */
     if (nread == -1) {
         if (connGetState(conn) == CONN_STATE_CONNECTED) {
             goto done;
@@ -2979,6 +3035,11 @@ void readQueryFromClient(connection *conn) {
         }
     } else if (nread == 0) {
         c->read_error = CLIENT_READ_CONN_CLOSED;
+        /*
+         * 调用freeClientAsync函数将客户端标记为待关闭状态
+         * 将客户端添加到server.clients_to_close列表中
+         * 在后续的事件循环 beforeSleep() 阶段安全地释放客户端资源
+         */
         freeClientAsync(c);
         goto done;
     }
