@@ -749,12 +749,15 @@ int allPersistenceDisabled(void) {
  *
  * current_value - The dividend
  * current_base - The divisor
+ *
+ * trackInstantaneousMetric(STATS_METRIC_COMMAND, server.stat_numcommands, current_time, factor);
  * */
 void trackInstantaneousMetric(int metric, long long current_value, long long current_base, long long factor) {
     if (server.inst_metric[metric].last_sample_base > 0) {
         long long base = current_base - server.inst_metric[metric].last_sample_base;
         long long value = current_value - server.inst_metric[metric].last_sample_value;
         long long avg = base > 0 ? (value * factor / base) : 0;
+        /* 保存采样的第 idx 个指标 */
         server.inst_metric[metric].samples[server.inst_metric[metric].idx] = avg;
         server.inst_metric[metric].idx++;
         server.inst_metric[metric].idx %= STATS_METRIC_SAMPLES;
@@ -896,13 +899,23 @@ int clientsCronResizeOutputBuffer(client *c, mstime_t now_ms) {
  * in the INFO output (clients section), without having to do an O(N) scan for
  * all the clients.
  *
+ * 本函数用于追踪最近几秒内占用内存量最大的客户端。
+ * 借助此机制，我们可在 INFO 命令输出（clients section）中提供该类信息，
+ * 而无需对所有客户端执行 O(N) 复杂度的全量扫描。
+ *
  * This is how it works. We have an array of CLIENTS_PEAK_MEM_USAGE_SLOTS slots
  * where we track, for each, the biggest client output and input buffers we
  * saw in that slot. Every slot corresponds to one of the latest seconds, since
  * the array is indexed by doing UNIXTIME % CLIENTS_PEAK_MEM_USAGE_SLOTS.
  *
+ * 其工作原理如下：我们维护一个包含 CLIENTS_PEAK_MEM_USAGE_SLOTS 个槽位的数组，
+ * 每个槽位分别记录该时段内观测到的客户端输出缓冲区、输入缓冲区的最大内存占用值。
+ * 每个槽位对应最近的某一秒——数组的索引通过 UNIXTIME % CLIENTS_PEAK_MEM_USAGE_SLOTS 计算得到。
+ *
  * When we want to know what was recently the peak memory usage, we just scan
- * such few slots searching for the maximum value. */
+ * such few slots searching for the maximum value.
+ * 当需要获取近期内存占用峰值时，只需扫描这少量槽位，从中找出最大值即可。
+ */
 #define CLIENTS_PEAK_MEM_USAGE_SLOTS 8
 size_t ClientsPeakMemInput[CLIENTS_PEAK_MEM_USAGE_SLOTS] = {0};
 size_t ClientsPeakMemOutput[CLIENTS_PEAK_MEM_USAGE_SLOTS] = {0};
@@ -1047,15 +1060,26 @@ void getExpansiveClientsInfo(size_t *in_usage, size_t *out_usage) {
  * we use this function in order to disconnect clients after a timeout, including
  * clients blocked in some blocking command with a non-zero timeout.
  *
+ * 本函数由 serverCron() 调用，用于对客户端执行需持续进行的关键操作。
+ * 例如，我们通过此函数实现客户端超时后的断开逻辑——包括那些因执行带非零超时时间的阻塞命令,
+ * 而处于阻塞状态的客户端。
+ *
  * The function makes some effort to process all the clients every second, even
  * if this cannot be strictly guaranteed, since serverCron() may be called with
  * an actual frequency lower than server.hz in case of latency events like slow
  * commands.
  *
+ * 该函数会尽可能保证每秒处理所有客户端（尽管无法严格确保这一点）；
+ * 因为当出现慢命令等延迟事件时，serverCron() 的实际调用频率可能低于 server.hz 配置值。
+ *
  * It is very important for this function, and the functions it calls, to be
  * very fast: sometimes Redis has tens of hundreds of connected clients, and the
  * default server.hz value is 10, so sometimes here we need to process thousands
  * of clients per second, turning this function into a source of latency.
+ *
+ * 本函数及其调用的子函数必须保证极高的执行效率，这一点至关重要：
+ * Redis 有时会连接着成千上百个客户端，而 server.hz 默认值为 10（即每秒执行 10 次），
+ * 这意味着本函数有时需要每秒处理数千个客户端；若效率不足，本函数将成为延迟的源头。
  */
 #define CLIENTS_CRON_PAUSE_IOTHREAD 8
 #define CLIENTS_CRON_MIN_ITERATIONS 5
@@ -1063,14 +1087,22 @@ void clientsCron(void) {
     /* Try to process at least numclients/server.hz of clients
      * per call. Since normally (if there are no big latency events) this
      * function is called server.hz times per second, in the average case we
-     * process all the clients in 1 second. */
+     * process all the clients in 1 second.
+     *
+     * server.hz 默认是 10, numclients 为 100 时，每秒至少处理 100/10 = 10 个客户端
+     */
     int numclients = listLength(server.clients);
     int iterations = numclients/server.hz;
     mstime_t now = mstime();
 
     /* Process at least a few clients while we are at it, even if we need
      * to process less than CLIENTS_CRON_MIN_ITERATIONS to meet our contract
-     * of processing each client once per second. */
+     * of processing each client once per second.
+     *
+     * 执行本逻辑时，至少要处理若干客户端；
+     * 即便为了满足「每秒处理每个客户端一次」的既定要求，实际需要处理的客户端数量
+     * 低于 CLIENTS_CRON_MIN_ITERATIONS 阈值，也仍需保证处理至少若干客户端。
+     */
     if (iterations < CLIENTS_CRON_MIN_ITERATIONS)
         iterations = (numclients < CLIENTS_CRON_MIN_ITERATIONS) ?
                      numclients : CLIENTS_CRON_MIN_ITERATIONS;
@@ -1230,12 +1262,19 @@ static inline void updateCachedTimeWithUs(int update_daylight_info, const long l
  * virtual memory and aging there is to store the current time in objects at
  * every object access, and accuracy is not needed. To access a global var is
  * a lot faster than calling time(NULL).
+ * 我们在全局状态中缓存了 Unix 时间的取值，原因是：
+ * 在开启虚拟内存和老化机制的场景下，若要在每次访问对象时都将当前时间存储到对象中，
+ * 开销过高且无此精度必要。访问全局变量的速度远快于调用 time(NULL) 函数。
  *
  * This function should be fast because it is called at every command execution
  * in call(), so it is possible to decide if to update the daylight saving
  * info or not using the 'update_daylight_info' argument. Normally we update
  * such info only when calling this function from serverCron() but not when
- * calling it from call(). */
+ * calling it from call().
+ * 此函数需保证高性能——因为它会在 call() 函数中每次执行命令时被调用；
+ * 因此可通过 'update_daylight_info' 参数控制是否更新夏令时信息。
+ * 通常仅在从 serverCron() 调用此函数时更新该信息，而从 call() 调用时则不更新。
+ */
 void updateCachedTime(int update_daylight_info) {
     const long long us = ustime();
     updateCachedTimeWithUs(update_daylight_info, us);
@@ -1321,7 +1360,13 @@ void cronUpdateMemoryStats(void) {
     run_with_period(100) {
         /* Sample the RSS and other metrics here since this is a relatively slow call.
          * We must sample the zmalloc_used at the same time we take the rss, otherwise
-         * the frag ratio calculate may be off (ratio of two samples at different times) */
+         * the frag ratio calculate may be off (ratio of two samples at different times)
+         *
+         * 在此处采集驻留集大小（RSS）及其他指标——因为这类调用相对耗时。
+         * 必须在采集 RSS 的同一时刻采集 zmalloc_used 数值；
+         * 否则内存碎片率（frag ratio）的计算结果可能出现偏差
+         * ( 本质是用两个不同时间点的采样值计算比值 )
+         */
         server.cron_malloc_stats.process_rss = zmalloc_get_rss();
         server.cron_malloc_stats.zmalloc_used = zmalloc_used_memory();
         /* Sampling the allocator info can be slow too.
@@ -1371,6 +1416,8 @@ void cronUpdateMemoryStats(void) {
  * Everything directly called here will be called server.hz times per second,
  * so in order to throttle execution of things we want to do less frequently
  * a macro is used: run_with_period(milliseconds) { .... }
+ *
+ * 在创建 aeCreateTimeEvent 中设置 serverCron
  */
 
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
@@ -1403,6 +1450,17 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     monotime cron_start = getMonotonicUs();
 
+    /*
+    * if (((100) <= 1000 / server.hz) || !(
+    *    server.cronloops % ((100) / (1000 / server.hz)))) {
+    *
+    *  1000/server.hz 计算出每次serverCron的时间间隔
+    *  当指定周期小于等于serverCron间隔时，每次都执行
+    *  否则，每N次serverCron执行一次，其中N = 指定周期 / serverCron间隔
+    *
+    *  当 server.hz=10（默认值）时，run_with_period(100) 意味着每次 serverCron 都会执行
+    *  当 server.hz=1 0时，run_with_period(500) 意味着每5次 serverCron 执行一次
+    */
     run_with_period(100) {
         long long stat_net_input_bytes, stat_net_output_bytes;
         long long stat_net_repl_input_bytes, stat_net_repl_output_bytes;
@@ -1412,6 +1470,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         atomicGet(server.stat_net_repl_output_bytes, stat_net_repl_output_bytes);
         monotime current_time = getMonotonicUs();
         long long factor = 1000000;  // us
+        /*
+         * STATS_METRIC_COMMAND 命令执行速率
+         * (当前命令数 - 上次命令数) / 时间差
+         */
         trackInstantaneousMetric(STATS_METRIC_COMMAND, server.stat_numcommands, current_time, factor);
         trackInstantaneousMetric(STATS_METRIC_NET_INPUT, stat_net_input_bytes + stat_net_repl_input_bytes,
                                  current_time, factor);
@@ -1639,6 +1701,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 }
 
 
+/* 开始阻塞操作时调用，初始化 */
 void blockingOperationStarts(void) {
     if(!server.blocking_op_nesting++){
         updateCachedTime(0);
@@ -1646,6 +1709,7 @@ void blockingOperationStarts(void) {
     }
 }
 
+/* 结束阻塞操作时调用 */
 void blockingOperationEnds(void) {
     if(!(--server.blocking_op_nesting)){
         server.blocked_last_cron = 0;
@@ -1656,7 +1720,12 @@ void blockingOperationEnds(void) {
  * also during blocked scripts.
  * It attempts to do its duties at a similar rate as the configured server.hz,
  * and updates cronloops variable so that similarly to serverCron, the
- * run_with_period can be used. */
+ * run_with_period can be used.
+ *
+ * 此函数在 RDB/AOF 文件加载阶段、以及脚本阻塞执行期间，承担 serverCron 函数的角色。
+ * 该函数会尝试以与配置项 server.hz 设定值相近的频率履行其职责，
+ * 并更新 cronloops 变量——如此一来，便能和 serverCron 函数一样，正常使用 run_with_period 机制。
+ */
 void whileBlockedCron(void) {
     /* Here we may want to perform some cron jobs (normally done server.hz times
      * per second). */
@@ -1667,14 +1736,22 @@ void whileBlockedCron(void) {
 
     /* In case we were called too soon, leave right away. This way one time
      * jobs after the loop below don't need an if. and we don't bother to start
-     * latency monitor if this function is called too often. */
+     * latency monitor if this function is called too often.
+     *
+     * 若本函数被调用得过于频繁（时机过早），则直接退出。
+     * 这样做有两个好处：一是下方循环后的一次性任务无需额外加 if 判断；
+     * 二是可避免因本函数调用过频而无谓启动延迟监控（latency monitor）。
+     */
     if (server.blocked_last_cron >= server.mstime)
         return;
 
     /* Increment server.cronloops so that run_with_period works. */
     long hz_ms = 1000 / server.hz;
+    /* 使用向上取整算法计算自上次执行以来应该执行的serverCron循环次数 */
     int cronloops = (server.mstime - server.blocked_last_cron + (hz_ms - 1)) / hz_ms; /* rounding up */
+    /* 将上次执行时间向前推进cronloops * hz_ms毫秒，为下次计算做准备。*/
     server.blocked_last_cron += cronloops * hz_ms;
+    /* 累加计算出的循环次数到全局计数器，确保run_with_period宏能正常工作。 */
     server.cronloops += cronloops;
 
     mstime_t latency;
@@ -1712,6 +1789,9 @@ extern int ProcessingEventsWhileBlocked;
  * main loop of the event driven library, that is, before to sleep
  * for ready file descriptors.
  *
+ * 每当 Redis 进入事件驱动库的主循环时（即准备阻塞等待就绪文件描述符之前），
+ * 本函数都会被调用。
+ *
  * Note: This function is (currently) called from two functions:
  * 1. aeMain - The main server loop
  * 2. processEventsWhileBlocked - Process clients during RDB/AOF load
@@ -1720,8 +1800,15 @@ extern int ProcessingEventsWhileBlocked;
  * to perform all actions (For example, we don't want to expire
  * keys), but we do need to perform some actions.
  *
+ * 若本函数由 processEventsWhileBlocked 调用，则无需执行全部操作（例如，无需执行键过期逻辑），
+ * 但仍需执行部分操作。
+ *
  * The most important is freeClientsInAsyncFreeQueue but we also
- * call some other low-risk functions. */
+ * call some other low-risk functions.
+ *
+ *  其中最重要的是调用 freeClientsInAsyncFreeQueue 函数，此外还会调用其他一些低风险函数。
+ *
+ */
 void beforeSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
 
@@ -1767,16 +1854,30 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 
     /* Handle blocked clients.
      * must be done before flushAppendOnlyFile, in case of appendfsync=always,
-     * since the unblocked clients may write data. */
+     * since the unblocked clients may write data.
+     *
+     * 处理阻塞状态的客户端。
+     * 若 appendfsync 配置为 always 模式，此操作必须在调用 flushAppendOnlyFile 之前执行；
+     * 原因是被解除阻塞的客户端可能会立即写入数据（若先刷盘再处理解阻塞，新写入的数据会错过本次刷盘）。
+     */
     blockedBeforeSleep();
 
     /* Record cron time in beforeSleep, which is the sum of active-expire, active-defrag and all other
      * tasks done by cron and beforeSleep, but excluding read, write and AOF, that are counted by other
-     * sets of metrics. */
+     * sets of metrics.
+     *
+     *  在 beforeSleep 函数中记录 cron 耗时；
+     *  该耗时统计的是主动过期（active-expire）、主动碎片整理（active-defrag)
+     *  以及 cron 与 beforeSleep 执行的所有其他任务的总耗时，但不包含读、写操作和 AOF 相关操作
+     *  这些操作的耗时由另一组指标单独统计。
+     */
     monotime cron_start_time_before_aof = getMonotonicUs();
 
     /* Run a fast expire cycle (the called function will return
-     * ASAP if a fast cycle is not needed). */
+     * ASAP if a fast cycle is not needed).
+     *
+     * 执行一次快速过期键扫描周期（被调用的函数会在无需执行快速扫描时，尽快（ASAP）返回）。
+     */
     if (server.active_expire_enabled && iAmMaster())
         activeExpireCycle(ACTIVE_EXPIRE_CYCLE_FAST);
 
@@ -2019,7 +2120,12 @@ void createSharedObjects(void) {
     for (j = 0; j < PROTO_SHARED_SELECT_CMDS; j++) {
         char dictid_str[64];
         int dictid_len;
-
+        /*
+         * *2\r\n$6\r\nSELECT\r\n$1\r\n0\r\n
+         * 数组（2个元素）
+         *   字符串（长度6）："SELECT"
+         *   字符串（长度1）："0"
+         */
         dictid_len = ll2string(dictid_str,sizeof(dictid_str),j);
         shared.select[j] = createObject(OBJ_STRING,
             sdscatprintf(sdsempty(),
@@ -2098,6 +2204,7 @@ void createSharedObjects(void) {
         initObjectLRUOrLFU(shared.integers[j]);
         shared.integers[j]->encoding = OBJ_ENCODING_INT;
     }
+    // hdr 即 header
     for (j = 0; j < OBJ_SHARED_BULKHDR_LEN; j++) {
         shared.mbulkhdr[j] = createObject(OBJ_STRING,
             sdscatprintf(sdsempty(),"*%d\r\n",j));
@@ -2157,7 +2264,7 @@ void initServerConfig(void) {
     server.bindaddr_count = CONFIG_DEFAULT_BINDADDR_COUNT;
     for (j = 0; j < CONFIG_DEFAULT_BINDADDR_COUNT; j++)
         server.bindaddr[j] = zstrdup(default_bindaddr[j]);
-    memset(server.listeners, 0x00, sizeof(server.listeners));
+    memset(server.listeners, 0x00, sizeof(server.listeners)); // 初始化
     server.active_expire_enabled = 1;
     server.allow_access_expired = 0;
     server.skip_checksum_validation = 0;
@@ -2605,6 +2712,10 @@ int listenToPort(connListener *sfd) {
         char* addr = bindaddr[j];
         int optional = *addr == '-';
         if (optional) addr++;
+        /*
+         * 2001:0db8::1 IPv6 地址
+         * 192.168.1.1 IPv4 地址
+         */
         if (strchr(addr,':')) {
             /* Bind IPv6 address. */
             sfd->fd[sfd->count] = anetTcp6Server(server.neterr,port,addr,server.tcp_backlog);
@@ -2612,6 +2723,7 @@ int listenToPort(connListener *sfd) {
             /* Bind IPv4 address. */
             sfd->fd[sfd->count] = anetTcpServer(server.neterr,port,addr,server.tcp_backlog);
         }
+        // listen 时anetTcpServer 可能返回错误
         if (sfd->fd[sfd->count] == ANET_ERR) {
             int net_errno = errno;
             serverLog(LL_WARNING,
@@ -2911,7 +3023,16 @@ void initServer(void) {
     }
 
     /* Register a readable event for the pipe used to awake the event loop
-     * from module threads. */
+     * from module threads.
+     * anetPipe 创建 module_pipe 管道
+     * 该函数负责注册模块管道的可读事件，是 Redis 模块系统与事件循环之间的关键连接点。
+     * server.module_pipe[0]：模块管道的读端文件描述符
+     *      后台线程完成任务时，向管道的写端写入数据
+     *      主线程通过 kqueue 感知到管道可读事件，执行相应的处理函数
+     * AE_READABLE：事件类型，表示可读事件
+     * modulePipeReadable：事件触发时的回调函数
+     * NULL：传递给回调函数的私有数据
+     */
     if (aeCreateFileEvent(server.el, server.module_pipe[0], AE_READABLE,
         modulePipeReadable,NULL) == AE_ERR) {
             serverPanic(
@@ -2998,7 +3119,7 @@ void initListeners(void) {
         listener->ct = connectionByType(CONN_TYPE_UNIX);
         listener->priv = &server.unixsocketperm; /* Unix socket specified */
     }
-
+    /*  j=0 时， CONN_TYPE 为 CONN_TYPE_SOCKET，同时创建 IPV4, IPV6 */
     /* create all the configured listener, and add handler to start to accept */
     int listen_fds = 0;
     for (int j = 0; j < CONN_TYPE_MAX; j++) {
@@ -3019,7 +3140,7 @@ void initListeners(void) {
             serverLog(LL_WARNING, "Failed listening on port %u (%s), aborting.", listener->port, listener->ct->get_type(NULL));
             exit(1);
         }
-
+        // 默认是 connSocketAcceptHandler
         if (createSocketAcceptHandler(listener, connAcceptHandler(listener->ct)) != C_OK)
             serverPanic("Unrecoverable error creating %s listener accept handler.", listener->ct->get_type(NULL));
 
@@ -3038,6 +3159,7 @@ void initListeners(void) {
  * Thread Local Storage initialization collides with dlopen call.
  * see: https://sourceware.org/bugzilla/show_bug.cgi?id=19329 */
 void InitServerLast(void) {
+    // 创建后台工作线程
     bioInit();
     initThreadedIO();
     set_jemalloc_bg_thread(server.jemalloc_bg_thread);
@@ -6796,7 +6918,7 @@ void setupSignalHandlers(void) {
     struct sigaction act;
 
     // 清空阻塞信号
-    // sa_mask 指定在信号处理程序执行期间应该被阻塞的信号掩码
+    // sa_mask 指定在信号处理程序执行期间应该被阻塞的信号掩码, 这里指不额外阻塞其他信号
     sigemptyset(&act.sa_mask);
     act.sa_flags = 0; // 设置调用自定义的信号处理函数
     act.sa_handler = sigShutdownHandler; // 自定义信号处理函数（1参数）
@@ -7152,7 +7274,14 @@ static sds redisProcTitleGetVariable(const sds varname, void *arg)
 }
 
 /* Expand the specified proc-title-template string and return a newly
- * allocated sds, or NULL. */
+ * allocated sds, or NULL.
+ *
+ * 输入参数：
+ *   template: {title} {listen-addr} {server-mode}
+ *   title: /path/to/redis-server
+ * 返回值：
+ *   /path/to/redis-server *:6379
+ */
 static sds expandProcTitleTemplate(const char *template, const char *title) {
     sds res = sdstemplate(template, redisProcTitleGetVariable, (void *) title);
     if (!res)
@@ -7444,7 +7573,7 @@ int main(int argc, char **argv) {
     initServerConfig();
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
-    moduleInitModulesSystem();
+    moduleInitModulesSystem(); // 这里初始化 server.module_pipe，会占用两个端口
     /*
      * 关键函数
      * 注册 TCP socket 连接 和 Unix Socket 连接
@@ -7667,6 +7796,12 @@ int main(int argc, char **argv) {
     }
     /* 负责从配置文件或专用 ACL 文件中加载用户认证和权限信息 */
     ACLLoadUsersAtStartup();
+    /*
+     * 初始化服务端端网络监听系统
+     * 根据配置创建各类型监听器（TCP、TLS、Unix 套接字等）
+     * 为每个绑定地址创建监听套接字
+     * 将监听套接字注册到事件循环系统中
+     */
     initListeners();
     if (server.cluster_enabled) {
         clusterInitLast();

@@ -48,6 +48,7 @@
 #include "bio.h"
 #include <fcntl.h>
 
+// BIO 支持的三种操作类型
 static char* bio_worker_title[] = {
     "bio_close_file",
     "bio_aof",
@@ -80,7 +81,15 @@ static unsigned long bio_jobs_counter[BIO_NUM_OPS] = {0};
 
 /* The bio_comp_list is used to hold completion job responses and to handover
  * to main thread to callback as notification for job completion. Main
- * thread will be triggered to read the list by signaling via writing to a pipe */
+ * thread will be triggered to read the list by signaling via writing to a pipe
+ *
+ * Redis的BIO（Background I/O）系统不仅负责在后台执行各种I/O操作，
+ * 还提供了一个任务完成通知机制，允许主线程在后台任务完成时得到通知并执行相应的回调函数。
+ *
+ * bio_comp_list 存储完成的任务
+ * job_comp_pipe[0]：读取端（主线程使用）
+ * job_comp_pipe[1]：写入端（工作线程使用）
+ */
 static list *bio_comp_list;
 static pthread_mutex_t bio_mutex_comp;
 static int job_comp_pipe[2];   /* Pipe used to awake the event loop */
@@ -98,7 +107,29 @@ typedef union bio_job {
         int type; /* Job-type tag. This needs to appear as the first element in all union members. */
     } header;
 
-    /* Job specific arguments.*/
+    /* Job specific arguments.
+     *
+     * type:
+     *  BIO_CLOSE_FILE 延迟关闭文件
+     *  BIO_AOF_FSYNC：AOF文件的延迟fsync操作
+     *  BIO_CLOSE_AOF：延迟关闭AOF文件
+     *
+     * fd:
+     *   AOF文件的fd用于执行fsync操作
+     *   普通文件的fd用于执行close操作
+     *
+     *  offset:
+     *    记录与操作相关的偏移量（主要用于AOF持久化)
+     *
+     *  need_fsync:1
+     *    位字段（bit field），标识是否需要在关闭文件前执行fsync
+     *  need_reclaim_cache:1
+     *    位字段，标识是否需要在关闭文件前回收文件系统缓存
+     *
+     *  设计意图：
+     *     优化内存使用，释放不再需要的文件缓存
+     *     减少操作系统缓存压力，提高系统整体性能
+     */
     struct {
         int type;
         int fd; /* Fd for file based background jobs */
@@ -129,7 +160,10 @@ void bioPipeReadJobCompList(aeEventLoop *el, int fd, void *privdata, int mask);
  * main thread. */
 #define REDIS_THREAD_STACK_SIZE (1024*1024*4)
 
-/* Initialize the background system, spawning the thread. */
+/* Initialize the background system, spawning the thread.
+ *
+ * background I/O 用于处理后台 I/O 操作
+ */
 void bioInit(void) {
     pthread_attr_t attr;
     pthread_t thread;
@@ -145,7 +179,9 @@ void bioInit(void) {
         bio_jobs[j] = listCreate();
     }
 
-    /* init jobs comp responses */
+    /* init jobs comp responses
+     * 初始化任务完成响应列表
+     */
     bio_comp_list = listCreate();
     pthread_mutex_init(&bio_mutex_comp, NULL);
 
@@ -153,7 +189,9 @@ void bioInit(void) {
      * Make the pipe non blocking. This is just a best effort aware mechanism
      * and we do not want to block not in the read nor in the write half.
      * Enable close-on-exec flag on pipes in case of the fork-exec system calls in
-     * sentinels or redis servers. */
+     * sentinels or redis servers.
+     * 创建管道用于后台线程唤醒主线程
+     */
     if (anetPipe(job_comp_pipe, O_CLOEXEC|O_NONBLOCK, O_CLOEXEC|O_NONBLOCK) == -1) {
         serverLog(LL_WARNING,
                   "Can't create the pipe for bio thread: %s", strerror(errno));
@@ -169,7 +207,9 @@ void bioInit(void) {
         serverPanic("Error registering the readable event for the bio pipe.");
     }
 
-    /* Set the stack size as by default it may be small in some system */
+    /* Set the stack size as by default it may be small in some system
+     *  设置线程栈大小
+     */
     pthread_attr_init(&attr);
     pthread_attr_getstacksize(&attr,&stacksize);
     // 为了处理某些系统可能返回0的特殊情况，确保后续计算有效。
@@ -274,6 +314,13 @@ void bioCreateFsyncJob(int fd, long long offset, int need_reclaim_cache) {
     bioSubmitJob(BIO_AOF_FSYNC, job);
 }
 
+/*
+ * 该函数是 BIO 工作线程的主循环，主要负责：
+ *   1. 线程初始化：设置线程标题、CPU 亲和性、信号掩码等
+ *   2. 任务处理：从对应类型的任务队列中取出任务并执行
+ *   3. 任务完成通知：处理任务完成后的回调通知机制
+ *   4. 线程同步：通过互斥锁和条件变量实现线程间通信
+ */
 void *bioProcessBackgroundJobs(void *arg) {
     bio_job *job;
     unsigned long worker = (unsigned long) arg;
@@ -290,9 +337,20 @@ void *bioProcessBackgroundJobs(void *arg) {
 
     pthread_mutex_lock(&bio_mutex[worker]);
     /* Block SIGALRM so we are sure that only the main thread will
-     * receive the watchdog signal. */
-    sigemptyset(&sigset);
-    sigaddset(&sigset, SIGALRM);
+     * receive the watchdog signal.
+     *
+     * Redis使用SIGALRM信号实现看门狗机制（watchdog），
+     * 用于监控系统是否正常运行。这个机制的设计要求：
+     * 1. 单一信号处理点：只有主线程能处理SIGALRM信号，避免多个线程同时处理导致的竞争条件
+     * 2. 确保监控有效性：如果后台线程也能接收SIGALRM，可能会干扰看门狗的正常工作，导致系统监控失效
+     * 3. 避免信号处理冲突：防止后台任务执行过程中被信号中断，保证任务处理的原子性
+     */
+    sigemptyset(&sigset); // 初始化一个信号集，将其置为空
+    sigaddset(&sigset, SIGALRM); // 将指定信号（SIGALRM）添加到信号集中
+
+    /* 设置线程的信号掩码,确保当前线程阻塞 SIGALRM 信号
+     * 仍可以处理其他信号：SIGINT、SIGTERM、SIGQUIT 等
+     */
     if (pthread_sigmask(SIG_BLOCK, &sigset, NULL))
         serverLog(LL_WARNING,
             "Warning: can't mask SIGALRM in bio.c thread: %s", strerror(errno));
@@ -302,6 +360,10 @@ void *bioProcessBackgroundJobs(void *arg) {
 
         /* The loop always starts with the lock hold.
          * 如果队列为空，等待任务
+         *
+         * 这里是一个消费者
+         * 让当前线程「休眠」，直到其他线程通过 pthread_cond_signal/pthread_cond_broadcast 唤醒它；
+         * 同时它会自动释放传入的互斥锁，被唤醒后又会重新获取这个锁
          */
         if (listLength(bio_jobs[worker]) == 0) {
             pthread_cond_wait(&bio_newjob_cond[worker], &bio_mutex[worker]);

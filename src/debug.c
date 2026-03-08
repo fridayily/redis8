@@ -2441,8 +2441,10 @@ static void sigsegvHandler(int sig, siginfo_t *info, void *secret) {
 }
 
 void setupDebugSigHandlers(void) {
+    // 该函数负责初始化堆栈跟踪管道，用于在信号处理期间安全地获取和处理堆栈信息。
     setupStacktracePipe();
 
+    // 负责设置段错误等崩溃信号的处理程序
     setupSigSegvHandler();
 
     struct sigaction act;
@@ -2470,15 +2472,16 @@ void setupSigSegvHandler(void) {
     /* SA_NODEFER to disables adding the signal to the signal mask of the
      * calling process on entry to the signal handler unless it is included in the sa_mask field. */
     /* SA_SIGINFO flag is set to raise the function defined in sa_sigaction.
-     * Otherwise, sa_handler is used. */
+     * Otherwise, sa_handler is used.
+     */
     act.sa_flags = SA_NODEFER | SA_SIGINFO;
     act.sa_sigaction = sigsegvHandler;
     if(server.crashlog_enabled) {
-        sigaction(SIGSEGV, &act, NULL);
-        sigaction(SIGBUS, &act, NULL);
-        sigaction(SIGFPE, &act, NULL);
-        sigaction(SIGILL, &act, NULL);
-        sigaction(SIGABRT, &act, NULL);
+        sigaction(SIGSEGV, &act, NULL); // 段错误
+        sigaction(SIGBUS, &act, NULL); // 总线错误
+        sigaction(SIGFPE, &act, NULL); // 浮点异常
+        sigaction(SIGILL, &act, NULL); // 非法指令
+        sigaction(SIGABRT, &act, NULL); // 中止信号
     }
 }
 
@@ -2601,16 +2604,28 @@ void sigalrmSignalHandler(int sig, siginfo_t *info, void *secret) {
 
 /* Schedule a SIGALRM delivery after the specified period in milliseconds.
  * If a timer is already scheduled, this function will re-schedule it to the
- * specified time. If period is 0 the current timer is disabled. */
+ * specified time. If period is 0 the current timer is disabled.
+ *
+ * period：定时器的时间间隔（毫秒）
+ *      如果为 0，将停止当前定时器
+ *      否则，设置定时器在指定毫秒后触发
+ *
+ * ITIMER_REAL：使用真实时间，超时后发送 SIGALRM 信号
+ */
 void watchdogScheduleSignal(int period) {
     struct itimerval it;
 
     /* Will stop the timer if period is 0. */
     it.it_value.tv_sec = period/1000;
     it.it_value.tv_usec = (period%1000)*1000;
-    /* Don't automatically restart. */
+    /* Don't automatically restart.
+     * it.it_interval.tv_sec = 0 为单次触发模式
+     * it.it_interval.tv_sec = 1 为每秒触发一次
+     */
     it.it_interval.tv_sec = 0;
     it.it_interval.tv_usec = 0;
+    /* setitimer 是一个 Unix/Linux 系统调用，用于设置定时器，
+     * 当定时器到期时会发送指定的信号。*/
     setitimer(ITIMER_REAL, &it, NULL);
 }
 void applyWatchdogPeriod(void) {

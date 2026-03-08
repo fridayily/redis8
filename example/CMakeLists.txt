@@ -218,5 +218,6 @@ endif()
 
 
 add_executable(fenwick_tree fenwick_tree.c)
+add_executable(test_pipe test_pipe.c)
 
 

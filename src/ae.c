@@ -68,7 +68,7 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->aftersleep = NULL;
     eventLoop->flags = 0;
     memset(eventLoop->privdata, 0, sizeof(eventLoop->privdata));
-    // note: 创建 epoll, kqueue 实例
+    // note: 创建 epoll, kqueue 实例， 设置 apidata
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it.
@@ -150,8 +150,19 @@ void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
 
-// 在事件循环中注册一个文件事件监听器，
-// 当指定的文件描述符(fd)上发生特定类型的I/O事件(可读/可写)时，会调用相应的处理函数
+/*
+ * 在事件循环中注册一个文件事件监听器，
+ * 当指定的文件描述符(fd)上发生特定类型的I/O事件(可读/可写)时，会调用相应的处理函数
+ *
+ *
+ * main->initServer->aeCreateEventLoop->aeApiCreate
+ * aeApiCreate 是一个抽象接口，由不同平台的事件机制
+ * (如 kqueue、epoll、select、evport）提供具体实现
+ * 不同平台的 aeApiCreate() 函数创建不同的状态结构体，但都统一赋值给 apidata
+ *
+ * aeCreateEventLoop 创建事件队列
+ * aeCreateFileEvent 添加文件事件
+ */
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         aeFileProc *proc, void *clientData)
 {
@@ -187,12 +198,13 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
     // redisAeEvents 是在客户端定义的结构体, ae.c 是服务端代码
     // 所以 clientData 代码无法转换为 redisAeEvents, clientData 是客户端产生的数据
     // ((redisAeEvents*)clientData)->context->c.obuf
+    // 这里 fe 还没赋值，注册事件后再赋值
     aeFileEvent *fe = &eventLoop->events[fd];
     // 调用底层API（如epoll、kqueue等）注册事件
     if (aeApiAddEvent(eventLoop, fd, mask) == -1)
         return AE_ERR;
     fe->mask |= mask;
-    // 根据事件类型设置相应的处理函数,这里不会执行
+    // 根据事件类型设置相应的处理函数,这里不会执行，该函数可以是 bioPipeReadJobCompList
     // aeProcessEvents 中根据触发的事件类型执行
     if (mask & AE_READABLE) fe->rfileProc = proc;
     if (mask & AE_WRITABLE) fe->wfileProc = proc;
@@ -478,7 +490,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         struct timeval tv, *tvp = NULL; /* NULL means infinite wait. */
         int64_t usUntilTimer;
 
-        // 调用事件处理前回调
+        // 调用事件处理前回调 beforeSleep
         if (eventLoop->beforesleep != NULL && (flags & AE_CALL_BEFORE_SLEEP))
             eventLoop->beforesleep(eventLoop);
 

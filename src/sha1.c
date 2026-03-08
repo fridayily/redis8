@@ -61,6 +61,7 @@ void SHA1Transform(uint32_t state[5], const unsigned char buffer[64])
         uint32_t l[16];
     } CHAR64LONG16;
 #ifdef SHA1HANDSOFF
+    // 复制输入块到临时缓冲区（考虑字节序）
     CHAR64LONG16 block[1];  /* use array to appear as a pointer */
     memcpy(block, buffer, 64);
 #else
@@ -72,12 +73,15 @@ void SHA1Transform(uint32_t state[5], const unsigned char buffer[64])
     CHAR64LONG16* block = (const CHAR64LONG16*)buffer;
 #endif
     /* Copy context->state[] to working vars */
+    // 初始化工作寄存器
     a = state[0];
     b = state[1];
     c = state[2];
     d = state[3];
     e = state[4];
-    /* 4 rounds of 20 operations each. Loop unrolled. */
+    /* 4 rounds of 20 operations each. Loop unrolled.
+     * 80轮哈希计算，分为4个阶段（20轮/阶段）
+     */
     R0(a,b,c,d,e, 0); R0(e,a,b,c,d, 1); R0(d,e,a,b,c, 2); R0(c,d,e,a,b, 3);
     R0(b,c,d,e,a, 4); R0(a,b,c,d,e, 5); R0(e,a,b,c,d, 6); R0(d,e,a,b,c, 7);
     R0(c,d,e,a,b, 8); R0(b,c,d,e,a, 9); R0(a,b,c,d,e,10); R0(e,a,b,c,d,11);
@@ -140,20 +144,28 @@ void SHA1Update(SHA1_CTX* context, const unsigned char* data, uint32_t len)
 {
     uint32_t i, j;
 
+    // 更新消息长度计数器
     j = context->count[0];
     if ((context->count[0] += len << 3) < j)
         context->count[1]++;
     context->count[1] += (len>>29);
+
+    // 计算当前缓冲区的数据长度
     j = (j >> 3) & 63;
+
+    // 如果新数据加上缓冲区已有数据超过64字节
     if ((j + len) > 63) {
+        // 先填满当前缓冲区并处理
         memcpy(&context->buffer[j], data, (i = 64-j));
         SHA1Transform(context->state, context->buffer);
+        // 批量处理完整的64字节块
         for ( ; i + 63 < len; i += 64) {
             SHA1Transform(context->state, &data[i]);
         }
         j = 0;
     }
     else i = 0;
+    // 将剩余数据存入缓冲区
     memcpy(&context->buffer[j], &data[i], len - i);
 }
 

@@ -11,6 +11,10 @@
 
 #include <sys/epoll.h>
 
+/*
+ * epfd epoll 实例的文件描述符，通过 epoll_create 或 epoll_create1 系统调用创建
+ * events 存储 epoll_wait 调用返回的就绪事件
+ */
 typedef struct aeApiState {
     int epfd;
     struct epoll_event *events;

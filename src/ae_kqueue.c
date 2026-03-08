@@ -115,7 +115,8 @@ static void aeApiFree(aeEventLoop *eventLoop) {
 static int aeApiAddEvent(aeEventLoop *eventLoop, int fd, int mask) {
     aeApiState *state = eventLoop->apidata;
     struct kevent ke;
-
+    // fd 是要监视的文件描述符，用于绑定服务器端口，监听客户端的请求
+    // state->kqfd 是 kqueue() 返回的实例
     if (mask & AE_READABLE) {
         EV_SET(&ke, fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
         if (kevent(state->kqfd, &ke, 1, NULL, 0, NULL) == -1) return -1;
@@ -153,6 +154,8 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
         *  timeout = {seconds, nanoseconds}（限时等待）
         *  state->events: 用于存储返回的就绪事件的缓冲区
         *  eventLoop->setsize: 最大可接收的事件数量
+        *
+        *  state->events	就绪事件存储缓冲区	用于接收内核返回的就绪事件数组
         */
         retval = kevent(state->kqfd, NULL, 0, state->events, eventLoop->setsize,
                         &timeout);
@@ -165,7 +168,14 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
     if (retval > 0) {
         int j;
 
-        /* Normally we execute the read event first and then the write event.
+        /*
+         *    假设 fd=5 同时可读可写
+         *   kqueue 可能返回两个独立的 kevent 结构：
+         *   kevent1: {ident=5, filter=EVFILT_READ, ...}   // 可读事件
+         *   kevent2: {ident=5, filter=EVFILT_WRITE, ...}  // 可写事件
+         */
+         /*
+         * Normally we execute the read event first and then the write event.
          * When the barrier is set, we will do it reverse.
          * 
          * However, under kqueue, read and write events would be separate
@@ -173,10 +183,6 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
          * reads and writes. So we store the event's mask we've got and merge
          * the same fd events later.
          *
-         * 假设 fd=5 同时可读可写
-         *   kqueue 可能返回两个独立的 kevent 结构：
-         *   kevent1: {ident=5, filter=EVFILT_READ, ...}   // 可读事件
-         *   kevent2: {ident=5, filter=EVFILT_WRITE, ...}  // 可写事件
          */
         for (j = 0; j < retval; j++) {
             struct kevent *e = state->events+j;

@@ -131,7 +131,7 @@ ConnectionType *connectionTypeUnix(void) {
     ct_unix = connectionByType(CONN_TYPE_UNIX);
     return ct_unix;
 }
-
+// 根据连接类型名称查找对应的类型索引
 int connectionIndexByType(const char *typename) {
     ConnectionType *ct;
 

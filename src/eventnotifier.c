@@ -55,6 +55,10 @@ int getWriteEventFd(struct eventNotifier *en) {
 #endif
 }
 
+/*
+ * 向事件通知器的写端写入一个字节
+ * 这会触发读端的IO事件，从而唤醒等待中的事件循环
+ */
 int triggerEventNotifier(struct eventNotifier *en) {
 #ifdef HAVE_EVENT_FD
     uint64_t u = 1;

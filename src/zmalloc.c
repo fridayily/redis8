@@ -865,6 +865,7 @@ int jemalloc_purge(void) {
 
 #else
 
+/* 不使用jemalloc时, 简单的空实现，所有输出参数都设置为0*/
 int zmalloc_get_allocator_info(int refresh_stats, size_t *allocated, size_t *active, size_t *resident,
                                size_t *retained, size_t *muzzy, size_t *frag_smallbins_bytes)
 {

@@ -600,7 +600,12 @@ sds trackingBuildBroadcastReply(client *c, rax *keys) {
 
 /* This function will run the prefixes of clients in BCAST mode and
  * keys that were modified about each prefix, and will send the
- * notifications to each client in each prefix. */
+ * notifications to each client in each prefix.
+ *
+ * 本函数会遍历处于 BCAST 模式下的客户端对应的前缀集合，
+ * 以及每个前缀下被修改过的键
+ * 并将通知发送给每个前缀对应的所有客户端。
+ */
 void trackingBroadcastInvalidationMessages(void) {
     raxIterator ri, ri2;
 

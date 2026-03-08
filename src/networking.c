@@ -2241,7 +2241,13 @@ void sendReplyToClient(connection *conn) {
 /* This function is called just before entering the event loop, in the hope
  * we can just write the replies to the client output buffer without any
  * need to use a syscall in order to install the writable event handler,
- * get it called, and so forth. */
+ * get it called, and so forth.
+ *
+ * 它在进入事件循环前被调用，希望能够直接将回复写入客户端输出缓冲区，
+ * 无需使用系统调用来安装可写事件处理器、触发其调用等操作。
+ *
+ *  in order to 为了, 目的在于
+ */
 int handleClientsWithPendingWrites(void) {
     listIter li;
     listNode *ln;
@@ -4530,14 +4536,23 @@ uint32_t isPausedActionsWithUpdate(uint32_t actions_bitmask) {
  * This allows to reply to clients with the -LOADING error while loading the
  * data set at startup or after a full resynchronization with the master
  * and so forth.
+ * Redis 会调用此函数，目的是：当进程阻塞在某些不可中断的操作中时，仍能时不时处理少量事件。
+ * 这一机制使得 Redis 在启动阶段加载数据集、或与主节点完成全量数据同步后等场景下，
+ * 能够向客户端返回 -LOADING 错误响应。
  *
  * It calls the event loop in order to process a few events. Specifically we
  * try to call the event loop 4 times as long as we receive acknowledge that
  * some event was processed, in order to go forward with the accept, read,
  * write, close sequence needed to serve a client.
  *
- * The function returns the total number of events processed. */
+ * 该函数会调用事件循环来处理少量事件。具体来说：
+ * 只要收到"有事件被处理"的确认信号，我们就尝试调用事件循环最多 4 次；
+ * 以此推进处理客户端请求所需的“接受连接→读取数据→写入响应→关闭连接”完整流程。
+ *
+ * The function returns the total number of events processed.
+ */
 void processEventsWhileBlocked(void) {
+     /* 限制最多尝试处理 4 轮事件，避免过度占用阻塞操作的执行时间。*/
     int iterations = 4; /* See the function top-comment. */
 
     /* Update our cached time since it is used to create and update the last
@@ -4547,7 +4562,13 @@ void processEventsWhileBlocked(void) {
     /* For the few commands that are allowed during busy scripts, we rather
      * provide a fresher time than the one from when the script started (they
      * still won't get it from the call due to execution_nesting. For commands
-     * during loading this doesn't matter. */
+     * during loading this doesn't matter.
+     *
+     * 对于那些在脚本繁忙（busy scripts）期间仍被允许执行的少量命令，
+     * 我们会为其提供一个「更新的时间值」——而非脚本启动时的旧时间值；
+     * ( 不过由于执行嵌套（execution_nesting）的存在，这些命令仍无法从 call() 调用中
+     * 获取实时时间。而对于加载（loading）阶段执行的命令来说，这一点并不影响。)
+     */
     mstime_t prev_cmd_time_snapshot = server.cmd_time_snapshot;
     server.cmd_time_snapshot = server.mstime;
 
@@ -4557,7 +4578,12 @@ void processEventsWhileBlocked(void) {
      * See https://github.com/redis/redis/issues/6988 for more info.
      * Note that there could be cases of nested calls to this function,
      * specifically on a busy script during async_loading rdb, and scripts
-     * that came from AOF. */
+     * that came from AOF.
+     *
+     * 注意：当我们在阻塞状态下处理事件时（例如 Lua 脚本执行繁忙期间），
+     * 会设置一个全局标记位。一旦该标记位被置位，我们会避免通过线程化 I/O（threaded I/O）
+     * 处理客户端的读操作。
+     */
     ProcessingEventsWhileBlocked++;
     while (iterations--) {
         long long startval = server.events_processed_while_blocked;
@@ -4565,7 +4591,10 @@ void processEventsWhileBlocked(void) {
             AE_FILE_EVENTS|AE_DONT_WAIT|
             AE_CALL_BEFORE_SLEEP|AE_CALL_AFTER_SLEEP);
         /* Note that server.events_processed_while_blocked will also get
-         * incremented by callbacks called by the event loop handlers. */
+         * incremented by callbacks called by the event loop handlers.
+         * 注意：服务器的 server.events_processed_while_blocked 计数器，
+         * 也会因事件循环处理器调用的回调函数而被累加。
+         */
         server.events_processed_while_blocked += ae_events;
         long long events = server.events_processed_while_blocked - startval;
         if (!events) break;

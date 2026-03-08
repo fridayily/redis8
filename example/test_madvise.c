@@ -57,6 +57,7 @@ void createSnapshot(DatabaseTable *table) {
 
         // 快照完成后，释放物理内存（类似 Redis 的 dismissObject）
         size_t table_size = table->capacity * sizeof(Record);
+        // 提示内存暂时不需要，内核可以释放这些内存，需要时再重新加载
         if (madvise(table->records, table_size, MADV_DONTNEED) == 0) {
             printf("子进程：快照完成，已释放物理内存\n");
         } else {
@@ -65,19 +66,20 @@ void createSnapshot(DatabaseTable *table) {
 
         // 子进程退出
         exit(0);
-    } else if (pid > 0) {
-        // 父进程：继续处理请求
-        printf("父进程：继续处理新请求...\n");
+    }
+    if (pid > 0) {
+      // 父进程：继续处理请求
+      printf("父进程：继续处理新请求...\n");
 
-        // 模拟在子进程创建快照期间，父进程修改数据
-        sleep(1);
-        addRecord(table, 1001, "父进程新增数据");
-        printf("父进程：新增记录 ID: 1001\n");
+      // 模拟在子进程创建快照期间，父进程修改数据
+      sleep(1);
+      addRecord(table, 1001, "父进程新增数据");
+      printf("父进程：新增记录 ID: 1001\n");
 
-        // 等待子进程完成
-        wait(NULL);
+      // 等待子进程完成
+      wait(NULL);
     } else {
-        perror("fork 失败");
+      perror("fork 失败");
     }
 }
 

@@ -2033,6 +2033,19 @@ struct redisServer {
     /* Replication (master) */
     char replid[CONFIG_RUN_ID_SIZE+1];  /* My current replication ID. */
     char replid2[CONFIG_RUN_ID_SIZE+1]; /* replid inherited from master*/
+    /*
+     * master_repl_offset:
+     *   主服务器每次处理写命令并准备向从服务器发送复制数据时，该偏移量会递增
+     *   表示主服务器已发送的复制数据流总量
+     * 全量同步（FULLRESYNC）:
+     *   当从服务器首次连接主服务器或无法进行部分同步时,主服务器生成 RDB 快照并发送给从服务器
+     *   从服务器加载 RDB 后，从新的偏移量开始接收增量数据
+     * 部分同步（PSYNC）:
+     *    当从服务器短暂断开连接后重新连接
+     *    从服务器向主服务器发送保存的主服务器 ID 和复制偏移量
+     *    主服务器检查偏移量是否在复制积压缓冲区（replication backlog）范围内
+     *    如果在范围内，仅发送偏移量之后的增量数据，大幅减少网络传输
+     */
     long long master_repl_offset;   /* My current replication offset */
     long long second_replid_offset; /* Accept offsets up to this for replid2. */
     redisAtomic long long fsynced_reploff_pending;/* Largest replication offset to

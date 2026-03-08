@@ -9,6 +9,7 @@
 #include "../src/sds.c"
 #include "../src/testhelp.h"
 // #include "../src/mstr.c"
+#include "../src/sha1.c"
 
 // 定义测试框架所需的全局变量
 int __failed_tests = 0;
@@ -34,12 +35,21 @@ int main(int argc, char* argv[])
     // }
 
 
-    printf("Starting listpack internal tests...\n");
-    if (listpackTest(argc, argv, 0) == 0) {
-        printf("All listpack internal tests passed!\n");
+    // printf("Starting listpack internal tests...\n");
+    // if (listpackTest(argc, argv, 0) == 0) {
+    //     printf("All listpack internal tests passed!\n");
+    //     return 0;
+    // } else  {
+    //     printf("Some listpack internal tests failed!\n");
+    //     return 1;
+    // }
+
+    printf("Starting sha1Test internal tests...\n");
+    if (sha1Test(argc, argv, 0) == 0) {
+        printf("All sha1Test internal tests passed!\n");
         return 0;
     } else  {
-        printf("Some listpack internal tests failed!\n");
+        printf("Some sha1Test# internal tests failed!\n");
         return 1;
     }
 

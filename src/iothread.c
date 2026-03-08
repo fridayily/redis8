@@ -123,12 +123,18 @@ int isClientMustHandledByMainThread(client *c) {
 }
 
 /* When the main thread accepts a new client or transfers clients to IO threads,
- * it assigns the client to the IO thread with the fewest clients. */
+ * it assigns the client to the IO thread with the fewest clients.
+ *
+ * 负责将客户端连接分配到负载最轻的 IO 线程，实现客户端连接的负载均衡。
+ */
 void assignClientToIOThread(client *c) {
     serverAssert(c->tid == IOTHREAD_MAIN_THREAD_ID);
     /* Find the IO thread with the fewest clients. */
     int min_id = 0;
     int min = INT_MAX;
+    /*
+     * 遍历所有 IO 线程（从索引 1 开始，0 为主线程）,找到管理客户端数量最少的 IO 线程
+     */
     for (int i = 1; i < server.io_threads_num; i++) {
         if (server.io_threads_clients_num[i] < min) {
             min = server.io_threads_clients_num[i];
@@ -137,9 +143,13 @@ void assignClientToIOThread(client *c) {
     }
 
     /* Assign the client to the IO thread. */
+    // 减少原线程的客户端计数（此处为主线程）
     server.io_threads_clients_num[c->tid]--;
+    // 更新客户端的绑定线程 ID (tid)
     c->tid = min_id;
+    // 更新客户端的当前运行线程 ID (running_tid)
     c->running_tid = min_id;
+    // 增加目标 IO 线程的客户端计数
     server.io_threads_clients_num[min_id]++;
 
     /* Unbind connection of client from main thread event loop, disable read and
@@ -198,6 +208,10 @@ static int PausedIOThreads[IO_THREADS_MAX_NUM] = {0};
 void pauseIOThreadsRange(int start, int end) {
     if (!server.io_threads_active) return;
     serverAssert(start >= 1 && end < server.io_threads_num && start <= end);
+    /* 验证当前执行代码的线程是否为Redis的主线程
+     * pthread_self() 获取当前线程的线程ID
+     * POSIX标准规定应使用pthread_equal()比较线程ID
+     */
     serverAssert(pthread_equal(pthread_self(), server.main_thread_id));
 
     /* Try to make all io threads paused in parallel */
@@ -216,7 +230,9 @@ void pauseIOThreadsRange(int start, int end) {
         triggerEventNotifier(IOThreads[i].pending_clients_notifier);
     }
 
-    /* Wait for all io threads paused */
+    /* Wait for all io threads paused
+     * 等待所有IO线程进入 PAUSED 状态
+     */
     for (int i = start; i <= end; i++) {
         if (PausedIOThreads[i] > 1) continue;
         int paused = IO_THREAD_PAUSING;
@@ -549,7 +565,16 @@ void *IOThreadMain(void *ptr) {
     return NULL;
 }
 
-/* Initialize the data structures needed for threaded I/O. */
+/* Initialize the data structures needed for threaded I/O.
+ * 该函数的主要功能包括：
+ *   1. 启用多线程 IO 模式
+ *   2. 创建和初始化 IO 线程池
+ *   3. 设置线程间通信机制（事件通知器）
+ *   4. 配置线程同步原语（互斥锁等）
+ *   5. 注册事件处理函数
+ *
+ * 默认不开启多线程IO
+ */
 void initThreadedIO(void) {
     if (server.io_threads_num <= 1) return;
 
@@ -561,16 +586,21 @@ void initThreadedIO(void) {
         exit(1);
     }
 
-    /* Spawn and initialize the I/O threads. */
+    /* Spawn and initialize the I/O threads.
+     * 遍历创建所有 IO 线程（从 1 开始，0 为主线程）
+     *
+     * 为每个线程分配 ID
+     * 创建独立的事件循环（aeCreateEventLoop）
+     */
     for (int i = 1; i < server.io_threads_num; i++) {
         IOThread *t = &IOThreads[i];
         t->id = i;
         t->el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
         t->el->privdata[0] = t;
-        t->pending_clients = listCreate();
-        t->processing_clients = listCreate();
-        t->pending_clients_to_main_thread = listCreate();
-        t->clients = listCreate();
+        t->pending_clients = listCreate(); // 等待处理的客户端
+        t->processing_clients = listCreate(); // 正在处理的客户端
+        t->pending_clients_to_main_thread = listCreate(); // 待返回主线程的客户端
+        t->clients = listCreate(); // 线程管理的所有客户端
         atomicSetWithSync(t->paused, IO_THREAD_UNPAUSED);
 
         pthread_mutexattr_t *attr = NULL;

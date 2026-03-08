@@ -242,8 +242,8 @@ int main() {
     printf("============================\n\n");
 
     // 1. DNS 查找示例
-    // dns_lookup_example("www.baidu.com", "80");
-    // printf("\n");
+    dns_lookup_example("www.baidu.com", "80");
+    printf("\n");
     //
     // dns_lookup_example("localhost", "22");
     // printf("\n");

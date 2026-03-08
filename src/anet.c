@@ -63,7 +63,16 @@ int anetSetBlock(char *err, int fd, int non_block) {
     }
 
     /* Check if this flag has been set or unset, if so,
-     * then there is no need to call fcntl to set/unset it again. */
+     * then there is no need to call fcntl to set/unset it again.
+     *
+     * flags & O_NONBLOCK：位与操作，检查socket的文件状态标志是否包含O_NONBLOCK非阻塞标志
+     * 如果已设置：结果为非零值
+     * 如果未设置：结果为0
+     *
+     * !!(flags & O_NONBLOCK)：双重否定操作，将位运算结果转换为标准布尔值
+     *
+     * 如果 non_block 已经设置，则可避免不必要的系统调用
+     */
     if (!!(flags & O_NONBLOCK) == !!non_block)
         return ANET_OK;
 
@@ -94,6 +103,17 @@ int anetCloexec(int fd) {
     int r;
     int flags;
 
+    /*
+     * 避免在系统调用过程中因信号中断导致的操作不完整
+     * 保证文件描述符标志的获取和设置操作能够最终完成
+     *
+     * 当系统调用被信号中断时，会返回-1并将errno设置为EINTR
+     * 这是一种可恢复的错误，可以通过重新执行系统调用来解决
+     *
+     * FD_CLOEXEC标志
+     * 当设置了此标志的文件描述符，在调用execve系列函数时会自动关闭
+     * 用于防止文件描述符泄漏到子进程中
+     */
     do {
         r = fcntl(fd, F_GETFD);
     } while (r == -1 && errno == EINTR);
@@ -523,6 +543,12 @@ int anetUnixGenericConnect(char *err, const char *path, int flags)
 }
 
 static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int backlog, mode_t perm) {
+    /*
+     * 将套接字与具体的网络地址绑定
+     *    地址绑定：告诉内核这个套接字应该监听哪个IP地址和端口
+     *    网络身份：为服务器在网络中建立身份标识
+     *    接收连接：为后续的 listen() 和 accept() 操作做准备
+     */
     if (bind(s,sa,len) == -1) {
         anetSetError(err, "bind: %s", strerror(errno));
         close(s);
@@ -532,6 +558,11 @@ static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int 
     if (sa->sa_family == AF_LOCAL && perm)
         chmod(((struct sockaddr_un *) sa)->sun_path, perm);
 
+    /*
+     * 将套接字从主动连接模式转换为被动监听模式，准备接收客户端连接请求。
+     * 如果 backlog =3, 最多允许 3 个连接在等待队列中排队,
+     * 第 4 个连接请求到达而队列已满，可能会被拒绝
+     */
     if (listen(s, backlog) == -1) {
         anetSetError(err, "listen: %s", strerror(errno));
         close(s);
@@ -539,7 +570,7 @@ static int anetListen(char *err, int s, struct sockaddr *sa, socklen_t len, int 
     }
     return ANET_OK;
 }
-
+// IPV6_V6ONLY 是 IPv6 套接字的一个关键选项，用于控制套接字是否只接受 IPv6 连接：
 static int anetV6Only(char *err, int s) {
     int yes = 1;
     if (setsockopt(s,IPPROTO_IPV6,IPV6_V6ONLY,&yes,sizeof(yes)) == -1) {
@@ -549,6 +580,15 @@ static int anetV6Only(char *err, int s) {
     return ANET_OK;
 }
 
+
+/*
+ * socket 创建套接字
+ * bind 绑定端口和地址
+ * listen(fd,128)
+ *      将 fd 设为监听状态，并告诉内核创建一个半连接队列和一个全连接队列
+ *      此时服务未执行 accept, 但内核已经开始监听端口，接收客户端的连接请求
+ *      128 为 backlog，控制着服务器可以同时处理的未完成连接的数量
+ */
 static int _anetTcpServer(char *err, int port, char *bindaddr, int af, int backlog)
 {
     int s = -1, rv;
@@ -572,11 +612,16 @@ static int _anetTcpServer(char *err, int port, char *bindaddr, int af, int backl
     }
     // 尝试所有返回的地址，只有创建成功一个即可，跳转到 end
     for (p = servinfo; p != NULL; p = p->ai_next) {
+        // 创建监听套接字，默认 ai_family = AF_INET  ai_socktype=SOCK_STREAM
         if ((s = socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
             continue;
 
         if (af == AF_INET6 && anetV6Only(err,s) == ANET_ERR) goto error;
         if (anetSetReuseAddr(err,s) == ANET_ERR) goto error;
+        /*
+         * bind + listen 成功后可以直接 end
+         * bind + listen 失败返回 ANET_ERR，listenToPort 后续有对应的处理逻辑
+         */
         if (anetListen(err,s,p->ai_addr,p->ai_addrlen,backlog,0) == ANET_ERR) s = ANET_ERR;
         goto end;
     }
@@ -746,7 +791,16 @@ error:
 
 /* Create a pipe buffer with given flags for read end and write end.
  * Note that it supports the file flags defined by pipe2() and fcntl(F_SETFL),
- * and one of the use cases is O_CLOEXEC|O_NONBLOCK. */
+ * and one of the use cases is O_CLOEXEC|O_NONBLOCK.
+ *
+ * 用于创建管道并为管道的读写端设置不同的文件标志。
+ * 它提供了跨平台的管道创建和配置能力，是 Redis 进程间通信和事件通知机制的基础组件
+ *
+ * pipe2() 可以在创建管道的同时设置标志，避免了传统 pipe() + fcntl() 组合的竞态条件
+ * 高效性：减少了系统调用次数（1次 vs 3次）
+ *
+ * 兼容性处理：当 pipe2() 不被支持时（ENOSYS）或参数无效时（EINVAL），自动回退到传统 pipe()
+ */
 int anetPipe(int fds[2], int read_flags, int write_flags) {
     int pipe_flags = 0;
 #if defined(__linux__) || defined(__FreeBSD__)

@@ -9593,6 +9593,12 @@ int RM_EventLoopAddOneShot(RedisModuleEventLoopOneShotFunc func, void *user_data
     listAddNodeTail(moduleEventLoopOneShots, oneshot);
     pthread_mutex_unlock(&moduleEventLoopMutex);
 
+    /*
+     * 通过管道写端 server.module_pipe[1] 写入一个字节数据（"A"）
+     * 唤醒 Redis 主线程的事件循环
+     * 非阻塞写入：由于管道是 O_NONBLOCK 模式，写入可能失败
+     * 容错设计：即使写入失败也不影响函数返回结果，体现"best effort"原则
+     */
     if (write(server.module_pipe[1],"A",1) != 1) {
         /* Pipe is non-blocking, write() may fail if it's full. */
     }
@@ -11910,8 +11916,15 @@ typedef struct KeyInfo {
  * in order to populate the event-specific structure when needed, in order
  * to return the structure with more information to the callback.
  *
+ * 每当 Redis 内核层需要触发一个可被模块拦截的事件时，都会调用本函数。
+ * 指针「data」的作用是：在需要时填充该事件专属的结构体，以便向回调函数返回包含更多信息的结构体。
+ *
  * 'eid' and 'subid' are just the main event ID and the sub event associated
- * with the event, depending on what exactly happened. */
+ * with the event, depending on what exactly happened.
+ *
+ * 「eid」（主事件ID）和「subid」（子事件ID）分别对应事件的主标识和附属标识，
+ *  具体取值取决于实际发生的事件类型。
+ */
 void moduleFireServerEvent(uint64_t eid, int subid, void *data) {
     /* Fast path to return ASAP if there is nothing to do, avoiding to
      * setup the iterator and so forth: we want this call to be extremely
@@ -12172,7 +12185,33 @@ void moduleInitModulesSystem(void) {
      * Make the pipe non blocking. This is just a best effort aware mechanism
      * and we do not want to block not in the read nor in the write half.
      * Enable close-on-exec flag on pipes in case of the fork-exec system calls in
-     * sentinels or redis servers. */
+     * sentinels or redis servers.
+     *
+     * 实现了 Redis 模块系统中的线程间唤醒机制，通过创建一个管道（pipe）
+     * 来允许模块线程（Module Threads）向 Redis 主线程发送信号，触发主线程处理模块事件或任务。
+     *
+     * 线程间通信机制：
+     *   Redis 是单线程事件驱动模型，但模块系统允许创建辅助线程
+     *   模块线程需要一种方式通知主线程处理完成的任务或事件
+     *   管道提供了简单高效的线程间信号传递方式
+     *
+     * 非阻塞模式的必要性：
+     *   主线程是 Redis 的核心，不能被阻塞
+     *   模块线程也不应该在发送信号时被阻塞
+     *   best effort aware mechanism" 表明这是一种尽力而为的通知机制，允许一定的容错性
+     *
+     * Close-on-exec 标志的安全性：
+     *   防止在 fork() + exec() 调用时管道文件描述符泄漏
+     *   避免子进程意外干扰父进程的线程通信
+     *
+     * 事件注册：Redis 主线程将管道的读端（server.module_pipe[0]）注册到事件循环
+     * 线程通信：
+     *   模块线程需要唤醒主线程时，向管道写端（server.module_pipe[1]）写入数据
+     *   这会触发主线程事件循环中的可读事件
+     *   主线程处理管道事件，检查并执行模块相关任务
+     *
+     * 数据清除：主线程读取并丢弃管道中的数据（通知本身比数据内容更重要）
+     */
     if (anetPipe(server.module_pipe, O_CLOEXEC|O_NONBLOCK, O_CLOEXEC|O_NONBLOCK) == -1) {
         serverLog(LL_WARNING,
             "Can't create the pipe for module threads: %s", strerror(errno));
@@ -12637,6 +12676,7 @@ void modulePipeReadable(aeEventLoop *el, int fd, void *privdata, int mask) {
     UNUSED(privdata);
 
     char buf[128];
+    // 清空管道数据
     while (read(fd, buf, sizeof(buf)) == sizeof(buf));
 
     /* Handle event loop events if pipe was written from event loop API */
